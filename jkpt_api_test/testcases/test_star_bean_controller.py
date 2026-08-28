@@ -7,16 +7,15 @@ import jsonpath
 import pytest
 
 from common.buy_cooldown_util import mark_bought, wait_buy_cooldown
+from common.case_report_util import assert_response
 from common.cleanup import register_unpaid_order_no
 from common.requests_util import BaseRequest
 from common.yaml_util import (
-    read_yaml,
-    write_yaml,
-    resolve_extract_value,
-    read_expected_msg,
     is_extract_placeholder,
+    read_yaml,
+    resolve_extract_value,
+    write_yaml,
 )
-from common.allure_assert_util import assert_api_result
 
 _jsonpath_parse = jsonpath.jsonpath
 _TEST_DATA = read_yaml("./yaml/test_star_bean_controller.yaml")
@@ -47,17 +46,12 @@ class TestSb01Calculate:
             params=params, headers=headers,
             case_name=case["name"], log_level="none",
         )
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0]
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=read_expected_msg(case["expected"]),
-            actual_code=code,
-            actual_msg=msg,
+        json_data = assert_response(
+            case,
+            res,
             biz_context={"请求参数": params},
         )
+        code = json_data["code"]
         # 正向：结构 + 守恒公式（§5 实测 starBeans == amount × exchangeRatio）
         if code == 0:
             data = _jsonpath_parse(json_data, "$.data")[0]
@@ -90,17 +84,8 @@ class TestSb02PackageActive:
             headers=headers,
             case_name=case["name"], log_level="none",
         )
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0]
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=read_expected_msg(case["expected"]),
-            actual_code=code,
-            actual_msg=msg,
-            biz_context={},
-        )
+        json_data = assert_response(case, res, biz_context={})
+        code = json_data["code"]
         # 正向：结构校验 + extract 写入（空列表合法，仅锁 code）
         if code == 0:
             packages = _jsonpath_parse(json_data, "$.data[*]") or []
@@ -155,17 +140,12 @@ class TestSb03Buy:
                 json=body, headers=headers,
                 case_name=case["name"], log_level="none",
             )
-            json_data = res.json()
-            code = _jsonpath_parse(json_data, "$.code")[0]
-            msg = _jsonpath_parse(json_data, "$.msg")[0]
-            assert_api_result(
-                case_name=case["name"],
-                expected_code=case["expected"]["code"],
-                expected_msg=read_expected_msg(case["expected"]),
-                actual_code=code,
-                actual_msg=msg,
+            json_data = assert_response(
+                case,
+                res,
                 biz_context={"请求参数": body},
             )
+            code = json_data["code"]
             if code != 0:
                 return
             data = _jsonpath_parse(json_data, "$.data")[0]
@@ -240,17 +220,12 @@ class TestSb04TransactionPage:
             params=params, headers=headers,
             case_name=case["name"], log_level="none",
         )
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0]
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=read_expected_msg(case["expected"]),
-            actual_code=code,
-            actual_msg=msg,
+        json_data = assert_response(
+            case,
+            res,
             biz_context={"请求参数": params},
         )
+        code = json_data["code"]
         if code != 0:
             return
         # 结构：$.data.items / total / totalPage（OAS 已给，探针 P3/P7 复核）

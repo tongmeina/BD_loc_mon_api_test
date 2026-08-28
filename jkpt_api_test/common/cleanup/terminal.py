@@ -2,7 +2,7 @@
 # tier 200：删除 session 造的设备（按分组聚合批量删）。
 # 原样搬迁自 conftest.get_terminals_by_group / cleanup_terminals_batch。
 from common.logger_util import key
-from common.requests_util import BaseRequest
+from common.requests_util import BaseRequest, parse_response_json
 
 _http = BaseRequest()
 
@@ -31,8 +31,8 @@ def get_terminals_by_group(base_url, auth_headers, group_id):
         log_level="none"
     )
 
-    json_data = resp.json()
-    code = _jp()(json_data, "$.code")[0]
+    json_data = parse_response_json(resp, context="设备清理响应")
+    code = json_data["code"]
 
     if code == 0:
         terminals = _jp()(json_data, "$.data.items[*].addr")
@@ -60,14 +60,14 @@ def cleanup_terminals_batch(base_url, auth_headers, group_id, addrs):
         log_level="none"
     )
 
-    json_data = resp.json()
-    code = _jp()(json_data, "$.code")[0]
+    json_data = parse_response_json(resp, context="设备清理响应")
+    code = json_data["code"]
 
     if code == 0:
         key(f"✅ 分组 {group_id} 设备删除", f"成功删除 {len(addrs)} 个设备")
         return len(addrs), 0
 
-    msg = _jp()(json_data, "$.msg")[0] if _jp()(json_data, "$.msg") else "未知错误"
+    msg = json_data.get("msg") or "未知错误"
     key(f"❌ 分组 {group_id} 设备删除失败", f"code={code}, msg={msg}")
     return 0, len(addrs)
 

@@ -2,7 +2,7 @@
 # 对讲群批 1：Ig01–Ig10；批 2：Ig04 重复邀请 / Ig11–12 通知 / Ig13 换群 / Ig14 满员
 # 计划：plan/intercom-group-tests.plan.md；现网基线 §5
 # 群收尾：用例内 close+delete 即清理；registry 兜底中断遗留（消费完成即注销）
-# 扩展断言：信封走 assert_api_result；成功一行结论，失败才打对照表（grilling 共识）
+# 扩展断言：信封走 send_case → assert_case 公共兼容链；成功一行结论，失败才打对照表（grilling 共识）
 import time
 
 import jsonpath
@@ -24,7 +24,7 @@ from common.cleanup import (
 )
 from common.logger_util import key
 from common.rescue_platform_client import generate_rescue_sn
-from common.requests_util import BaseRequest
+from common.requests_util import BaseRequest, parse_response_json
 from common.star_bean_util import latest_balance, latest_entry
 from common.yaml_util import (
     read_yaml,
@@ -172,8 +172,8 @@ class _IgHelpers:
             params={"intercomGroupName": name}, headers=auth_headers,
             case_name=f"建对讲群 {name}", log_level="none",
         )
-        data = res.json()
-        code = _jp_first(data, "$.code")
+        data = parse_response_json(res, context=f"建对讲群 {name}")
+        code = data["code"]
         gid = _jp_first(data, "$.data.id")
         if code != 0 or not gid:
             raise AssertionError(f"建对讲群失败: {data}")
@@ -190,7 +190,8 @@ class _IgHelpers:
             params={"intercomGroupId": gid}, headers=auth_headers,
             case_name="查群成员", log_level="none",
         )
-        addrs = _jsonpath_parse(res.json(), "$.data[*].addr") or []
+        data = parse_response_json(res, context="查群成员")
+        addrs = _jsonpath_parse(data, "$.data[*].addr") or []
         return addrs if addrs is not False else []
 
     @staticmethod
@@ -208,8 +209,8 @@ class _IgHelpers:
             },
             headers=auth_headers, case_name=f"满员造棒入库 {sn}", log_level="none",
         )
-        data = r.json()
-        if _jp_first(data, "$.code") != 0:
+        data = parse_response_json(r, context=f"满员造棒入库 {sn}")
+        if data["code"] != 0:
             raise AssertionError(f"满员造棒入库失败: {data}")
         register_cleanup(f"rescue_chat_{sn}", [sn], rescue_chat.cleaner, tier=100)
         register_glht_inventory(sn)
@@ -224,8 +225,8 @@ class _IgHelpers:
             },
             headers=auth_headers, case_name=f"满员造棒添加 {sn}", log_level="none",
         )
-        data = r.json()
-        if _jp_first(data, "$.code") != 0:
+        data = parse_response_json(r, context=f"满员造棒添加 {sn}")
+        if data["code"] != 0:
             raise AssertionError(f"满员造棒添加失败: {data}")
         return sn
 
@@ -236,7 +237,7 @@ class _IgHelpers:
             params=params or {"page": 1, "pageSize": 20},
             headers=headers, case_name="邀请通知列表", log_level="none",
         )
-        return res.json()
+        return parse_response_json(res, context="邀请通知列表")
 
     @staticmethod
     def find_pending_notice(http, base_url, headers_b, group_id, addr):
@@ -367,7 +368,8 @@ class TestIg03Update:
             params={"intercomGroupId": params["intercomGroupId"]},
             headers=auth_headers, case_name="改名复核", log_level="none",
         )
-        name_now = _jp_first(r2.json(), "$.data.groupName")
+        remainder_data = parse_response_json(r2, context="改名复核")
+        name_now = _jp_first(remainder_data, "$.data.groupName")
         _IgHelpers.report_extra_and_assert("改名复核", [
             {"项": "remainder.groupName", "期望": params["intercomGroupName"],
              "实际": name_now, "通过": name_now == params["intercomGroupName"]},
@@ -442,7 +444,8 @@ class TestIg04Invite:
                     params={"intercomGroupId": gid}, headers=auth_headers,
                     case_name="重复邀后查成员", log_level="none",
                 )
-                listed = _jsonpath_parse(r2.json(), "$.data[*].addr") or []
+                member_data = parse_response_json(r2, context="重复邀后查成员")
+                listed = _jsonpath_parse(member_data, "$.data[*].addr") or []
                 rows.append({
                     "项": "仍在本群", "期望": invited, "实际": listed,
                     "通过": all(a in listed for a in invited),
@@ -454,7 +457,8 @@ class TestIg04Invite:
                             "page": 1, "pageSize": 50},
                     headers=auth_headers, case_name="重复邀后发送列表", log_level="none",
                 )
-                sitems = _jsonpath_parse(send.json(), "$.data.items[*]") or []
+                send_data = parse_response_json(send, context="邀请发送列表")
+                sitems = _jsonpath_parse(send_data, "$.data.items[*]") or []
                 pending = [it for it in sitems if it.get("addr") in invited]
                 nid = resolve_extract_value("{{ig_invite_notice_id}}", required=False)
                 rows.append({
@@ -512,14 +516,16 @@ class TestIg04Invite:
             params={"intercomGroupId": gid}, headers=auth_headers,
             case_name="邀请后查成员", log_level="none",
         )
-        listed = _jsonpath_parse(r2.json(), "$.data[*].addr") or []
+        member_data = parse_response_json(r2, context="成员列表复核")
+        listed = _jsonpath_parse(member_data, "$.data[*].addr") or []
         if branch_b:
             send = http.send_request(
                 "get", f"{base_url}/api/monitor/intercom/message/send/invitation/list",
                 params={"intercomGroupId": gid, "page": 1, "pageSize": 50},
                 headers=auth_headers, case_name="B邀后A发送列表", log_level="none",
             )
-            sitems = _jsonpath_parse(send.json(), "$.data.items[*]") or []
+            send_data = parse_response_json(send, context="B邀后A发送列表")
+            sitems = _jsonpath_parse(send_data, "$.data.items[*]") or []
             pending = next(
                 (it for it in sitems if it.get("addr") in invited), None,
             )
@@ -651,7 +657,8 @@ class TestIg07Nickname:
             params={"intercomGroupId": gid}, headers=auth_headers,
             case_name="昵称复核", log_level="none",
         )
-        members = _jsonpath_parse(r2.json(), "$.data[*]") or []
+        member_data = parse_response_json(r2, context="昵称复核")
+        members = _jsonpath_parse(member_data, "$.data[*]") or []
         target = next((m for m in members if m.get("id") == mid), None)
         nick_now = (target.get("avatarInfo") or {}).get("nickname") if target else None
         _IgHelpers.report_extra_and_assert("昵称复核", [
@@ -687,7 +694,8 @@ class TestIg08AddrRemove:
             params={"intercomGroupId": gid}, headers=auth_headers,
             case_name="移除复核", log_level="none",
         )
-        listed = _jsonpath_parse(r2.json(), "$.data[*].addr") or []
+        member_data = parse_response_json(r2, context="成员列表复核")
+        listed = _jsonpath_parse(member_data, "$.data[*].addr") or []
         _IgHelpers.report_extra_and_assert("移除复核", [
             {"项": "addr 不在 list", "期望": f"{addr} 不在", "实际": listed,
              "通过": addr not in listed},
@@ -716,8 +724,8 @@ class TestIg09Close:
                 json={"intercomGroupId": gid, "addrInfos": [{"addr": sn_b3}], "force": False},
                 headers=auth_headers, case_name="关群-邀B新棒", log_level="none",
             )
-            inv_data = inv.json()
-            if _jp_first(inv_data, "$.code") != 0:
+            inv_data = parse_response_json(inv, context="前置邀请")
+            if inv_data["code"] != 0:
                 raise AssertionError(f"关群前置邀请失败: {inv_data}")
         else:
             gid = _IgHelpers.resolve_gid(case, required=False)
@@ -739,7 +747,8 @@ class TestIg09Close:
             params={"intercomGroupId": gid}, headers=auth_headers,
             case_name="关群复核", log_level="none",
         )
-        status_now = _jp_first(r2.json(), "$.data.status")
+        remainder_data = parse_response_json(r2, context="关群复核")
+        status_now = _jp_first(remainder_data, "$.data.status")
         _IgHelpers.report_extra_and_assert("关群复核", [
             {"项": "remainder.status", "期望": expect_status, "实际": status_now,
              "通过": status_now == expect_status},
@@ -860,8 +869,8 @@ class TestIg12InviteHandler:
                 json={"intercomGroupId": gid, "addrInfos": [{"addr": sn_b2}], "force": False},
                 headers=auth_headers, case_name="拒绝支路补邀请", log_level="none",
             )
-            inv_data = inv.json()
-            if _jp_first(inv_data, "$.code") != 0:
+            inv_data = parse_response_json(inv, context="前置邀请")
+            if inv_data["code"] != 0:
                 raise AssertionError(f"拒绝支路补邀请失败: {inv_data}")
             notice = None
             for _ in range(5):
@@ -870,7 +879,8 @@ class TestIg12InviteHandler:
                     params={"intercomGroupId": gid, "status": "PENDING", "page": 1, "pageSize": 50},
                     headers=auth_headers, case_name="拒绝支路A发送列表", log_level="none",
                 )
-                sitems = _jsonpath_parse(send.json(), "$.data.items[*]") or []
+                send_data = parse_response_json(send, context="邀请发送列表")
+                sitems = _jsonpath_parse(send_data, "$.data.items[*]") or []
                 notice = next((it for it in sitems if it.get("addr") == sn_b2), None)
                 if notice:
                     break
@@ -904,7 +914,8 @@ class TestIg12InviteHandler:
                 params={"intercomGroupId": gid}, headers=auth_headers,
                 case_name="同意后成员复核", log_level="none",
             )
-            listed = _jsonpath_parse(r2.json(), "$.data[*].addr") or []
+            member_data = parse_response_json(r2, context="同意后成员复核")
+            listed = _jsonpath_parse(member_data, "$.data[*].addr") or []
             _IgHelpers.report_extra_and_assert("同意闭环", [
                 {"项": "A侧 list 含 B addr", "期望": sn_b, "实际": listed,
                  "通过": sn_b in listed},
@@ -913,11 +924,12 @@ class TestIg12InviteHandler:
                 "put", url, params=params, headers=auth_headers_b,
                 case_name="重复同意(探针口径)", log_level="none",
             )
-            c3 = _jp_first(r3.json(), "$.code")
+            repeat_data = parse_response_json(r3, context="重复同意(探针口径)")
+            c3 = repeat_data["code"]
             _IgHelpers.report_extra_and_assert("重复处理", [
                 {"项": "code", "期望": "非0", "实际": c3, "通过": c3 not in (0, None)},
             ], f"重复处理 code={c3}")
-            key("重复同意返回", f"code={c3} msg={_jp_first(r3.json(), '$.msg')}")
+            key("重复同意返回", f"code={c3} msg={repeat_data.get('msg')}" )
         if case.get("handlerType") == "REJECTED":
             _IgHelpers.report_extra_and_assert("拒绝只锁码", [
                 {"项": "code", "期望": 0, "实际": code, "通过": code == 0},
@@ -946,8 +958,8 @@ class TestIg13SwitchGroup:
             json={"intercomGroupId": gid_new, "addrInfos": [{"addr": sn}], "force": False},
             headers=auth_headers, case_name="换群-邀他人棒", log_level="none",
         )
-        data = inv.json()
-        code = _jp_first(data, "$.code")
+        data = parse_response_json(inv, context="换群-邀他人棒")
+        code = data["code"]
         confirm = _jp_first(data, "$.data.confirm")
         listed_new = _IgHelpers.list_member_addrs(http, base_url, auth_headers, gid_new)
         listed_old2 = _IgHelpers.list_member_addrs(http, base_url, auth_headers, old)
@@ -956,8 +968,9 @@ class TestIg13SwitchGroup:
             params={"intercomGroupId": gid_new, "status": "PENDING", "page": 1, "pageSize": 50},
             headers=auth_headers, case_name="换群-发送列表", log_level="none",
         )
+        send_data = parse_response_json(send, context="换群-发送列表")
         pending = next(
-            (it for it in (_jsonpath_parse(send.json(), "$.data.items[*]") or [])
+            (it for it in (_jsonpath_parse(send_data, "$.data.items[*]") or [])
              if it.get("addr") == sn),
             None,
         )
@@ -983,8 +996,8 @@ class TestIg13SwitchGroup:
             params={"handlerType": "AGREED", "invitationNoticeId": nid},
             headers=auth_headers_b, case_name="换群-B同意", log_level="none",
         )
-        h = handler.json()
-        hcode = _jp_first(h, "$.code")
+        h = parse_response_json(handler, context="换群-B同意")
+        hcode = h["code"]
         listed_new2 = _IgHelpers.list_member_addrs(http, base_url, auth_headers, gid_new)
         listed_old3 = _IgHelpers.list_member_addrs(http, base_url, auth_headers, old)
         _IgHelpers.report_extra_and_assert("他人棒换群-同意", [
@@ -1006,8 +1019,9 @@ class TestIg13SwitchGroup:
             json={"intercomGroupId": g1, "addrInfos": [{"addr": sn}], "force": False},
             headers=auth_headers, case_name="自己棒入G1", log_level="none",
         )
-        if _jp_first(inv1.json(), "$.code") != 0:
-            raise AssertionError(f"自己棒入G1失败: {inv1.json()}")
+        inv1_data = parse_response_json(inv1, context="自己棒入G1")
+        if inv1_data["code"] != 0:
+            raise AssertionError(f"自己棒入G1失败: {inv1_data}")
         if _COST["inviteMemberDeductEnabled"]:
             _IgHelpers.wait_new_deduction(
                 http, base_url, auth_headers, "INVITE_MEMBER",
@@ -1022,11 +1036,11 @@ class TestIg13SwitchGroup:
             json={"intercomGroupId": g2, "addrInfos": [{"addr": sn}], "force": False},
             headers=auth_headers, case_name="自己棒force假", log_level="none",
         )
-        jf = inv_f.json()
+        jf = parse_response_json(inv_f, context="自己棒force假")
         after_f = _IgHelpers.global_balance(http, base_url, auth_headers)
         _IgHelpers.report_extra_and_assert("自己棒 force=false", [
-            {"项": "code", "期望": 0, "实际": _jp_first(jf, "$.code"),
-             "通过": _jp_first(jf, "$.code") == 0},
+            {"项": "code", "期望": 0, "实际": jf["code"],
+             "通过": jf["code"] == 0},
             {"项": "confirm", "期望": 0, "实际": _jp_first(jf, "$.data.confirm"),
              "通过": _jp_first(jf, "$.data.confirm") == 0},
             {"项": "仍在G1", "期望": sn, "实际": _IgHelpers.list_member_addrs(
@@ -1043,12 +1057,12 @@ class TestIg13SwitchGroup:
             json={"intercomGroupId": g2, "addrInfos": [{"addr": sn}], "force": True},
             headers=auth_headers, case_name="自己棒force真", log_level="none",
         )
-        jt = inv_t.json()
+        jt = parse_response_json(inv_t, context="自己棒force真")
         g1_after = _IgHelpers.list_member_addrs(http, base_url, auth_headers, g1)
         g2_after = _IgHelpers.list_member_addrs(http, base_url, auth_headers, g2)
         _IgHelpers.report_extra_and_assert("自己棒 force=true", [
-            {"项": "code", "期望": 0, "实际": _jp_first(jt, "$.code"),
-             "通过": _jp_first(jt, "$.code") == 0},
+            {"项": "code", "期望": 0, "实际": jt["code"],
+             "通过": jt["code"] == 0},
             {"项": "confirm", "期望": 1, "实际": _jp_first(jt, "$.data.confirm"),
              "通过": _jp_first(jt, "$.data.confirm") == 1},
             {"项": "已退G1", "期望": f"{sn} 不在", "实际": g1_after,
@@ -1076,7 +1090,8 @@ class TestIg14FullGroup:
             params={"intercomGroupId": gid}, headers=auth_headers,
             case_name="满员群额度", log_level="none",
         )
-        cap = _jp_first(rem.json(), "$.data.maxMembers")
+        remainder_data = parse_response_json(rem, context="满员群额度")
+        cap = _jp_first(remainder_data, "$.data.maxMembers")
         if not isinstance(cap, int) or cap < 1:
             pytest.skip(f"maxMembers 不可用: {cap}")
         one_id = group_fixture["one_id"]
@@ -1093,8 +1108,9 @@ class TestIg14FullGroup:
                 json={"intercomGroupId": gid, "addrInfos": [{"addr": sn}], "force": False},
                 headers=auth_headers, case_name=f"满员填入 {sn}", log_level="none",
             )
-            if _jp_first(inv.json(), "$.code") != 0:
-                raise AssertionError(f"满员填入失败 {sn}: {inv.json()}")
+            fill_data = parse_response_json(inv, context=f"满员填入 {sn}")
+            if fill_data["code"] != 0:
+                raise AssertionError(f"满员填入失败 {sn}: {fill_data}")
             if _COST["inviteMemberDeductEnabled"]:
                 _IgHelpers.wait_new_deduction(
                     http, base_url, auth_headers, "INVITE_MEMBER",

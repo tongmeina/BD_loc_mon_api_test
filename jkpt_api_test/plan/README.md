@@ -143,9 +143,9 @@ import time
 import random
 import logging
 from common.requests_util import BaseRequest
+from common.case_report_util import assert_response
 from common.yaml_util import clear_yaml
 from common.captcha_util import CaptchaRecognizer
-import jsonpath
 
 # ==================== 日志配置 ====================
 logging.basicConfig(
@@ -223,17 +223,21 @@ def auth_token(base_url):
             log_level="full"  # 详细日志
         )
 
-        json_data = login_resp.json()
+        json_data = assert_response(
+            {"name": "用户登录", "expected": {"code": 0}},
+            login_resp,
+            biz_context={"请求参数": {"account": account}},
+        )
         logger.info(f"[响应] {json_data}")
 
-        code = jsonpath.JSONPath("$.code").parse(json_data)[0]
+        code = json_data["code"]
 
         if code == 0:
-            token = jsonpath.JSONPath("$.data.token").parse(json_data)[0]
+            token = json_data["data"]["token"]
             logger.info(f"[认证] Token获取成功: {token[:20]}...")
             return token
         else:
-            msg = jsonpath.JSONPath("$.msg").parse(json_data)[0]
+            msg = json_data.get("msg") or "未知错误"
             logger.warning(f"[认证] 登录失败: code={code}, msg={msg}")
             if attempt < max_attempts:
                 logger.info("1秒后重试...")
@@ -307,8 +311,8 @@ login_cases:
 
 ```python
 # testcases/test_login.py
-import jsonpath
 import pytest
+from common.case_report_util import assert_response
 from common.requests_util import BaseRequest
 from common.yaml_util import read_yaml
 
@@ -345,11 +349,15 @@ class TestLoginAPI:
             log_level="full"  # 详细日志
         )
 
-        json_data = res.json()
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": payload},
+        )
         print(f"[响应] {json_data}")
 
-        code = jsonpath.JSONPath("$.code").parse(json_data)[0]
-        msg = jsonpath.JSONPath("$.msg").parse(json_data)[0]
+        code = json_data["code"]
+        msg = json_data.get("msg")
 
         if code == 0:
             print(f"[断言] 预期失败，实际成功")

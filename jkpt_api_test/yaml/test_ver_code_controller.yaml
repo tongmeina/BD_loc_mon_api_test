@@ -1,0 +1,865 @@
+# yaml/test_ver_code_controller.yaml
+# 验证码发送接口用例
+# 正向接收端按主人明确授权固定；真实发送默认关闭。
+
+login_code_cases:
+
+  - name: "验证码-登录-正向-专用手机号码"
+    mode: "SHORT_MSG"
+    to: "13128251672"
+    authorization_mode: "valid"
+    requires_delivery: true
+    expected:
+      code: 0
+      msg: "成功"
+      http_status: 200
+
+  - name: "验证码-登录-缺少mode"
+    mode_missing: true
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-登录-mode为空"
+    mode: ""
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-登录-mode非法"
+    mode: "SMS"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-登录-缺少to"
+    mode: "SHORT_MSG"
+    to_missing: true
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码或邮箱不能为空"
+      http_status: 200
+
+  - name: "验证码-登录-to为空"
+    mode: "SHORT_MSG"
+    to: ""
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码或邮箱不能为空"
+      http_status: 200
+
+  - name: "验证码-登录-mode与对象不匹配"
+    mode: "SHORT_MSG"
+    to: "nobody@example.invalid"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-登录-对象格式非法"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-登录-缺少Authorization-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "missing"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-登录-Authorization为空-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "empty"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-登录-Authorization伪造-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-登录-仅HeaderAuthorization-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "header_only"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-登录-to注入字符"
+    mode: "SHORT_MSG"
+    to: "<script>alert(1)</script>"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-登录-低次数限频探测"
+    mode: "SHORT_MSG"
+    to: "13128251672"
+    authorization_mode: "valid"
+    requires_delivery: true
+    abuse: true
+    observe_only: true
+    repeat: 2
+    expected:
+      http_status: 200
+
+register_code_cases:
+
+  - name: "验证码-注册-正向-专用手机号码"
+    mode: "SHORT_MSG"
+    to: "13128251672"
+    authorization_mode: "valid"
+    requires_delivery: true
+    expected:
+      code: 0
+      msg: "成功"
+      http_status: 200
+
+  - name: "验证码-注册-缺少mode"
+    mode_missing: true
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-注册-mode为空"
+    mode: ""
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-注册-mode非法"
+    mode: "SMS"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-注册-缺少to"
+    mode: "SHORT_MSG"
+    to_missing: true
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码或邮箱不能为空"
+      http_status: 200
+
+  - name: "验证码-注册-to为空"
+    mode: "SHORT_MSG"
+    to: ""
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码或邮箱不能为空"
+      http_status: 200
+
+  - name: "验证码-注册-mode与对象不匹配"
+    mode: "SHORT_MSG"
+    to: "nobody@example.invalid"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-注册-对象格式非法"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-注册-缺少Authorization-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "missing"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-注册-Authorization为空-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "empty"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-注册-Authorization伪造-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-注册-仅HeaderAuthorization-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "header_only"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-注册-to注入字符"
+    mode: "SHORT_MSG"
+    to: "<script>alert(1)</script>"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-注册-低次数限频探测"
+    mode: "SHORT_MSG"
+    to: "13128251672"
+    authorization_mode: "valid"
+    requires_delivery: true
+    abuse: true
+    observe_only: true
+    repeat: 2
+    expected:
+      http_status: 200
+
+retrieve_password_code_cases:
+
+  - name: "验证码-找回密码-正向-专用手机号码"
+    mode: "SHORT_MSG"
+    to: "13128251672"
+    authorization_mode: "valid"
+    requires_delivery: true
+    expected:
+      code: 0
+      msg: "成功"
+      http_status: 200
+
+  - name: "验证码-找回密码-缺少mode"
+    mode_missing: true
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-找回密码-mode为空"
+    mode: ""
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-找回密码-mode非法"
+    mode: "SMS"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-找回密码-缺少to"
+    mode: "SHORT_MSG"
+    to_missing: true
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码或邮箱不能为空"
+      http_status: 200
+
+  - name: "验证码-找回密码-to为空"
+    mode: "SHORT_MSG"
+    to: ""
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码或邮箱不能为空"
+      http_status: 200
+
+  - name: "验证码-找回密码-mode与对象不匹配"
+    mode: "SHORT_MSG"
+    to: "nobody@example.invalid"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-找回密码-对象格式非法"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-找回密码-缺少Authorization-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "missing"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-找回密码-Authorization为空-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "empty"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-找回密码-Authorization伪造-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-找回密码-仅HeaderAuthorization-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "header_only"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-找回密码-to注入字符"
+    mode: "SHORT_MSG"
+    to: "<script>alert(1)</script>"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+update_password_code_cases:
+
+  - name: "验证码-修改密码-正向-专用手机号码"
+    mode: "SHORT_MSG"
+    to: "13128251672"
+    authorization_mode: "valid"
+    requires_delivery: true
+    expected:
+      code: 0
+      msg: "成功"
+      http_status: 200
+
+  - name: "验证码-修改密码-缺少mode"
+    mode_missing: true
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-修改密码-mode为空"
+    mode: ""
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-修改密码-mode非法"
+    mode: "SMS"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-修改密码-缺少to"
+    mode: "SHORT_MSG"
+    to_missing: true
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码或邮箱不能为空"
+      http_status: 200
+
+  - name: "验证码-修改密码-to为空"
+    mode: "SHORT_MSG"
+    to: ""
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码或邮箱不能为空"
+      http_status: 200
+
+  - name: "验证码-修改密码-mode与对象不匹配"
+    mode: "SHORT_MSG"
+    to: "nobody@example.invalid"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-修改密码-对象格式非法"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-修改密码-缺少Authorization-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "missing"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-修改密码-Authorization为空-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "empty"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-修改密码-Authorization伪造-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-修改密码-仅HeaderAuthorization-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "header_only"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-修改密码-to注入字符"
+    mode: "SHORT_MSG"
+    to: "<script>alert(1)</script>"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+bind_email_code_cases:
+
+  - name: "验证码-绑定邮箱-正向-专用邮箱"
+    mode: "EMAIL"
+    to: "3360699298@qq.com"
+    authorization_mode: "valid"
+    requires_delivery: true
+    expected:
+      code: 0
+      msg: "成功"
+      http_status: 200
+
+  - name: "验证码-绑定邮箱-缺少mode"
+    mode_missing: true
+    to: "not-an-email"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-绑定邮箱-mode为空"
+    mode: ""
+    to: "not-an-email"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-绑定邮箱-mode非法"
+    mode: "SMS"
+    to: "not-an-email"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-绑定邮箱-缺少to"
+    mode: "EMAIL"
+    to_missing: true
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码或邮箱不能为空"
+      http_status: 200
+
+  - name: "验证码-绑定邮箱-to为空"
+    mode: "EMAIL"
+    to: ""
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码或邮箱不能为空"
+      http_status: 200
+
+  - name: "验证码-绑定邮箱-mode与对象不匹配"
+    mode: "EMAIL"
+    to: "00000000000"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "邮箱格式不正确"
+      http_status: 200
+
+  - name: "验证码-绑定邮箱-对象格式非法"
+    mode: "EMAIL"
+    to: "not-an-email"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "邮箱格式不正确"
+      http_status: 200
+
+  - name: "验证码-绑定邮箱-缺少Authorization-安全格式校验"
+    mode: "EMAIL"
+    to: "not-an-email"
+    authorization_mode: "missing"
+    expected:
+      code: 1001
+      error_msg: "邮箱格式不正确"
+      http_status: 200
+
+  - name: "验证码-绑定邮箱-Authorization为空-安全格式校验"
+    mode: "EMAIL"
+    to: "not-an-email"
+    authorization_mode: "empty"
+    expected:
+      code: 1001
+      error_msg: "邮箱格式不正确"
+      http_status: 200
+
+  - name: "验证码-绑定邮箱-Authorization伪造-安全格式校验"
+    mode: "EMAIL"
+    to: "not-an-email"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "邮箱格式不正确"
+      http_status: 200
+
+  - name: "验证码-绑定邮箱-仅HeaderAuthorization-安全格式校验"
+    mode: "EMAIL"
+    to: "not-an-email"
+    authorization_mode: "header_only"
+    expected:
+      code: 1001
+      error_msg: "邮箱格式不正确"
+      http_status: 200
+
+  - name: "验证码-绑定邮箱-to注入字符"
+    mode: "EMAIL"
+    to: "<script>alert(1)</script>"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "邮箱格式不正确"
+      http_status: 200
+
+bind_phone_code_cases:
+
+  - name: "验证码-绑定手机-正向-专用手机号码"
+    mode: "SHORT_MSG"
+    to: "13128251672"
+    authorization_mode: "valid"
+    requires_delivery: true
+    expected:
+      code: 0
+      msg: "成功"
+      http_status: 200
+
+  - name: "验证码-绑定手机-缺少mode"
+    mode_missing: true
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-绑定手机-mode为空"
+    mode: ""
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-绑定手机-mode非法"
+    mode: "SMS"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-绑定手机-缺少to"
+    mode: "SHORT_MSG"
+    to_missing: true
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码或邮箱不能为空"
+      http_status: 200
+
+  - name: "验证码-绑定手机-to为空"
+    mode: "SHORT_MSG"
+    to: ""
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码或邮箱不能为空"
+      http_status: 200
+
+  - name: "验证码-绑定手机-mode与对象不匹配"
+    mode: "SHORT_MSG"
+    to: "nobody@example.invalid"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-绑定手机-对象格式非法"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-绑定手机-缺少Authorization-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "missing"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-绑定手机-Authorization为空-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "empty"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-绑定手机-Authorization伪造-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-绑定手机-仅HeaderAuthorization-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "header_only"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-绑定手机-to注入字符"
+    mode: "SHORT_MSG"
+    to: "<script>alert(1)</script>"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+set_emergency_contact_code_cases:
+
+  - name: "验证码-设置紧急联系人-正向-专用手机号码"
+    mode: "SHORT_MSG"
+    to: "13128251672"
+    authorization_mode: "valid"
+    requires_delivery: true
+    expected:
+      code: 0
+      msg: "成功"
+      http_status: 200
+
+  - name: "验证码-设置紧急联系人-缺少mode"
+    mode_missing: true
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-设置紧急联系人-mode为空"
+    mode: ""
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-设置紧急联系人-mode非法"
+    mode: "SMS"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "通知方式不能为空"
+      http_status: 200
+
+  - name: "验证码-设置紧急联系人-缺少to"
+    mode: "SHORT_MSG"
+    to_missing: true
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码或邮箱不能为空"
+      http_status: 200
+
+  - name: "验证码-设置紧急联系人-to为空"
+    mode: "SHORT_MSG"
+    to: ""
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码或邮箱不能为空"
+      http_status: 200
+
+  - name: "验证码-设置紧急联系人-mode与对象不匹配"
+    mode: "SHORT_MSG"
+    to: "nobody@example.invalid"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-设置紧急联系人-对象格式非法"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-设置紧急联系人-缺少Authorization-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "missing"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-设置紧急联系人-Authorization为空-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "empty"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-设置紧急联系人-Authorization伪造-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-设置紧急联系人-仅HeaderAuthorization-安全格式校验"
+    mode: "SHORT_MSG"
+    to: "not-a-phone"
+    authorization_mode: "header_only"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200
+
+  - name: "验证码-设置紧急联系人-to注入字符"
+    mode: "SHORT_MSG"
+    to: "<script>alert(1)</script>"
+    authorization_mode: "forged"
+    expected:
+      code: 1001
+      error_msg: "手机号码格式不正确"
+      http_status: 200

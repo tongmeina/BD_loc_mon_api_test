@@ -19,9 +19,9 @@ import jsonpath
 import pytest
 import time
 from common.requests_util import BaseRequest
-from common.yaml_util import read_yaml, write_yaml, resolve_extract_value, read_expected_msg
-from common.logger_util import sep, key, print_request, print_response
-from common.allure_assert_util import assert_api_result
+from common.yaml_util import read_yaml, write_yaml, resolve_extract_value
+from common.logger_util import sep, print_request, print_response
+from common.case_report_util import assert_response
 
 _jsonpath_parse = jsonpath.jsonpath
 http = BaseRequest()
@@ -32,24 +32,12 @@ _TEST_DATA = read_yaml("./yaml/test_group_controller.yaml")
 class _GroupHelpers:
     """不被 pytest 收集；供 7 个接口类复用断言。"""
 
-    def _assert_and_report(self, case, res):
+    def _assert_and_report(self, case, response, biz_context=None):
         """统一断言并输出报告"""
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0]
-
-        sep(" 断言结果 ")
-        key("预期 code", case["expected"]["code"])
-        key("实际 code", code)
-        key("预期 msg", read_expected_msg(case["expected"]))
-        key("实际 msg", msg)
-
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=read_expected_msg(case["expected"]),
-            actual_code=code,
-            actual_msg=msg
+        return assert_response(
+            case,
+            response,
+            biz_context=biz_context or {"请求用例": case["name"]},
         )
 
     @staticmethod
@@ -88,15 +76,16 @@ class TestGr01AddGroupL1(_GroupHelpers):
             log_level="none"
         )
         print_response(res)
-
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
+        json_data = self._assert_and_report(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        code = json_data["code"]
         if code == 0:
             one_id = _jsonpath_parse(json_data, "$.data.id")
             if one_id:
                 write_yaml("./extract.yaml", {"one_id": one_id[0]}, mode="append")
-
-        self._assert_and_report(case, res)
 
 
 class TestGr02AddGroupL2(_GroupHelpers):
@@ -127,15 +116,16 @@ class TestGr02AddGroupL2(_GroupHelpers):
             log_level="none"
         )
         print_response(res)
-
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
+        json_data = self._assert_and_report(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        code = json_data["code"]
         if code == 0:
             two_id = _jsonpath_parse(json_data, "$.data.id")
             if two_id:
                 write_yaml("./extract.yaml", {"two_id": two_id[0]}, mode="append")
-
-        self._assert_and_report(case, res)
 
 
 class TestGr03AddGroupL3(_GroupHelpers):
@@ -166,15 +156,16 @@ class TestGr03AddGroupL3(_GroupHelpers):
             log_level="none"
         )
         print_response(res)
-
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
+        json_data = self._assert_and_report(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        code = json_data["code"]
         if code == 0:
             three_id = _jsonpath_parse(json_data, "$.data.id")
             if three_id:
                 write_yaml("./extract.yaml", {"three_id": three_id[0]}, mode="append")
-
-        self._assert_and_report(case, res)
 
 
 class TestGr04GetGroups(_GroupHelpers):
@@ -205,12 +196,15 @@ class TestGr04GetGroups(_GroupHelpers):
         )
         print_response(res)
 
-        self._assert_and_report(case, res)
+        json_data = self._assert_and_report(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
 
         # 正向用例：提取所有分组ID，降序拼接写入extract.yaml
         if case["name"] == "获取设备分组信息-正向":
-            json_data = res.json()
-            code = _jsonpath_parse(json_data, "$.code")[0]
+            code = json_data["code"]
             if code == 0:
                 all_ids = _jsonpath_parse(json_data, "$.data[*].id")
                 if all_ids:

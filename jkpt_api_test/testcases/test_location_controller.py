@@ -4,19 +4,17 @@
 # 类序即执行序：List → Track → Export（三接口相互独立，均消费 bd_test_terminal 造数，无 extract 链）
 # YAML 映射：location_list_cases → TestLc01 / location_track_cases → TestLc02 / location_export_cases → TestLc03
 # 计划见 plan/location-controller-tests.plan.md：addr 仅用 bd_test_terminal；时间窗为 Asia/Shanghai 当天
-import jsonpath
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from common.requests_util import BaseRequest
-from common.yaml_util import read_yaml, read_expected_msg
+from common.yaml_util import read_yaml
 from common.logger_util import sep, key, print_request, print_response
-from common.allure_assert_util import assert_api_result
+from common.case_report_util import assert_response
 from common.export_assert_util import assert_export_response
 
-_jsonpath_parse = jsonpath.jsonpath
 http = BaseRequest()
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
 
@@ -66,24 +64,11 @@ class _LocationHelpers:
         headers = {**auth_headers}
         return {k: v for k, v in headers.items() if k.lower() != "authorization"}
 
-    def _assert_and_report(self, case, res):
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
-
-        sep(" 断言结果 ")
-        key("预期 code", case["expected"]["code"])
-        key("实际 code", code)
-        key("预期 msg", read_expected_msg(case["expected"]))
-        key("实际 msg", msg)
-
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=read_expected_msg(case["expected"]),
-            actual_code=code,
-            actual_msg=msg,
-            biz_context={"请求用例": case["name"]},
+    def _assert_and_report(self, case, response, biz_context=None):
+        return assert_response(
+            case,
+            response,
+            biz_context=biz_context or {"请求用例": case["name"]},
         )
 
     def _assert_export_response(self, case, res):

@@ -20,7 +20,6 @@ test_xxx_protocol.tpl.py — 北斗协议用例模板（jkpt 协议层）
 
 import pytest
 
-from common.allure_assert_util import assert_api_result
 from common.yaml_util import read_yaml
 
 
@@ -84,12 +83,7 @@ class TestXxxProtocol:
     #
     #     result = bd_client.send_alarm_13(**kwargs)
     #
-    #     # 协议层无统一 msg，可用 assert_api_result 走业务码断言
-    #     assert_api_result(
-    #         case_name=case["name"],
-    #         expected_code=case["expected"]["code"],
-    #         expected_msg=read_expected_msg(case["expected"]),
-    #         actual_code=result.code,
-    #         actual_msg=result.msg,
-    #         biz_context={"protocol": case.get("protocol"), "from_addr": bd_test_terminal},
+    #     assert result.success, (
+    #         f"[{case['name']}] 协议发送失败: "
+    #         f"status={result.status_code}, code={result.code}, msg={result.msg}"
     #     )

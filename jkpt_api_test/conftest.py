@@ -5,7 +5,13 @@ import datetime
 import logging
 import json
 import os
-from common.requests_util import BaseRequest, get_last_http_context, NonJsonResponseError, parse_response_json
+from common.requests_util import (
+    BaseRequest,
+    NonJsonResponseError,
+    get_last_http_context,
+    parse_response_json,
+    sanitize_sensitive_data,
+)
 from common.run_artifact_util import wipe_allure_raw_dirs
 from common.yaml_util import clear_yaml
 from common.captcha_util import CaptchaRecognizer, generate_captcha_id
@@ -62,6 +68,7 @@ def pytest_configure(config):
     if wiped:
         key("🧹 已清空 Allure raw", ", ".join(wiped))
 
+
 @pytest.fixture(scope="session")
 def base_url(pytestconfig):
     return pytestconfig.base_url
@@ -97,14 +104,14 @@ def _login_token(base_url, account, password, label):
             case_name=f"{label}用户登录", log_level="none",
         )
         print_response(login_resp)
-        json_data = login_resp.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
+        json_data = parse_response_json(login_resp, context=f"{label}用户登录")
+        code = json_data["code"]
         if code == 0:
             token = _jsonpath_parse(json_data, "$.data.token")[0]
             key("🎫 Token", f"{token[:30]}...")
             key("✅ 结果", f"{label}登录成功!")
             return token
-        msg = _jsonpath_parse(json_data, "$.msg")[0]
+        msg = json_data.get("msg") or "未知错误"
         key("❌ 失败原因", f"code={code}, msg={msg}")
         if attempt < max_attempts:
             print("  ⏳ 1秒后重试...")
@@ -160,40 +167,41 @@ def pytest_runtest_makereport(item, call):
         context = get_last_http_context()
 
         if context and allure:
-            # 附加请求上下文
-            if "request" in context:
-                request_info = context["request"]
+            transport_allure_attached = context.get("transport_allure_attached", False)
+
+            # BaseRequest 已附请求/响应时，失败 Hook 不再重复；仅为非标准请求兜底。
+            if not transport_allure_attached and "request" in context:
+                request_info = sanitize_sensitive_data(context["request"])
                 allure.attach(
                     json.dumps(request_info, indent=2, ensure_ascii=False),
                     name="【失败】请求信息",
-                    attachment_type=allure.attachment_type.JSON
+                    attachment_type=allure.attachment_type.JSON,
                 )
 
-            # 附加响应上下文
-            if "response" in context:
-                response_info = context["response"]
+            if not transport_allure_attached and "response" in context:
+                response_info = sanitize_sensitive_data(context["response"])
                 allure.attach(
                     json.dumps(response_info, indent=2, ensure_ascii=False),
                     name="【失败】响应信息",
-                    attachment_type=allure.attachment_type.JSON
+                    attachment_type=allure.attachment_type.JSON,
                 )
 
-            # 附加错误上下文
             if "error" in context:
-                error_info = context["error"]
+                error_info = sanitize_sensitive_data(context["error"])
                 allure.attach(
                     json.dumps(error_info, indent=2, ensure_ascii=False),
                     name="【失败】错误信息",
-                    attachment_type=allure.attachment_type.JSON
+                    attachment_type=allure.attachment_type.JSON,
                 )
 
-            # 附加断言失败详情
-            if hasattr(report.longrepr, 'reprcrash'):
-                failure_msg = str(report.longrepr.reprcrash.message) if hasattr(report.longrepr, 'reprcrash') else str(report.longrepr)
+            if hasattr(report.longrepr, "reprcrash"):
+                failure_msg = sanitize_sensitive_data(
+                    str(report.longrepr.reprcrash.message)
+                )
                 allure.attach(
-                    failure_msg,
+                    str(failure_msg),
                     name="【失败】断言详情",
-                    attachment_type=allure.attachment_type.TEXT
+                    attachment_type=allure.attachment_type.TEXT,
                 )
 
 # ==================== 全局分组 Fixture ====================
@@ -219,12 +227,12 @@ def group_fixture(base_url, auth_headers, pytestconfig):
         json_data = parse_response_json(resp, context="group_fixture创建一级分组")
     except NonJsonResponseError as e:
         pytest.fail(str(e))
-    code = _jsonpath_parse(json_data, "$.code")[0]
+    code = json_data["code"]
     if code == 0:
         group_ids["one_id"] = _jsonpath_parse(json_data, "$.data.id")[0]
         key("一级分组ID", group_ids["one_id"])
     else:
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else "未知错误"
+        msg = json_data.get("msg") or "未知错误" if _jsonpath_parse(json_data, "$.msg") else "未知错误"
         pytest.fail(f"group_fixture创建一级分组失败: code={code}, msg={msg}")
 
     # 2. 创建二级分组
@@ -240,12 +248,12 @@ def group_fixture(base_url, auth_headers, pytestconfig):
         json_data = parse_response_json(resp, context="group_fixture创建二级分组")
     except NonJsonResponseError as e:
         pytest.fail(str(e))
-    code = _jsonpath_parse(json_data, "$.code")[0]
+    code = json_data["code"]
     if code == 0:
         group_ids["two_id"] = _jsonpath_parse(json_data, "$.data.id")[0]
         key("二级分组ID", group_ids["two_id"])
     else:
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else "未知错误"
+        msg = json_data.get("msg") or "未知错误" if _jsonpath_parse(json_data, "$.msg") else "未知错误"
         pytest.fail(f"group_fixture创建二级分组失败: code={code}, msg={msg}")
 
     # 3. 创建三级分组
@@ -261,12 +269,12 @@ def group_fixture(base_url, auth_headers, pytestconfig):
         json_data = parse_response_json(resp, context="group_fixture创建三级分组")
     except NonJsonResponseError as e:
         pytest.fail(str(e))
-    code = _jsonpath_parse(json_data, "$.code")[0]
+    code = json_data["code"]
     if code == 0:
         group_ids["three_id"] = _jsonpath_parse(json_data, "$.data.id")[0]
         key("三级分组ID", group_ids["three_id"])
     else:
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else "未知错误"
+        msg = json_data.get("msg") or "未知错误" if _jsonpath_parse(json_data, "$.msg") else "未知错误"
         pytest.fail(f"group_fixture创建三级分组失败: code={code}, msg={msg}")
 
     # 存储到 stash，供 session 结束时清理使用
@@ -295,8 +303,8 @@ def terminal_types(base_url, auth_headers):
         log_level="none"
     )
 
-    json_data = resp.json()
-    code = _jsonpath_parse(json_data, "$.code")[0]
+    json_data = parse_response_json(resp, context="获取设备类型枚举")
+    code = json_data["code"]
 
     if code == 0:
         # 返回字典列表: [{"name": "PN07", "value": "PN07设备"}, ...]
@@ -308,7 +316,7 @@ def terminal_types(base_url, auth_headers):
             key("设备类型列表", "未获取到类型")
             return []
     else:
-        msg = _jsonpath_parse(json_data, "$.msg")[0]
+        msg = json_data.get("msg") or "未知错误"
         key("获取设备类型失败", f"code={code}, msg={msg}")
         return []
 
@@ -325,8 +333,8 @@ def terminal_use_scopes(base_url, auth_headers):
         case_name="获取使用范围枚举",
         log_level="none",
     )
-    json_data = resp.json()
-    code = _jsonpath_parse(json_data, "$.code")[0]
+    json_data = parse_response_json(resp, context="获取使用范围枚举")
+    code = json_data["code"]
     if code == 0:
         scopes = _jsonpath_parse(json_data, "$.data[*]")
         if scopes:
@@ -334,7 +342,7 @@ def terminal_use_scopes(base_url, auth_headers):
             return scopes
         key("使用范围列表", "未获取到")
         return []
-    msg = _jsonpath_parse(json_data, "$.msg")[0]
+    msg = json_data.get("msg") or "未知错误"
     key("获取使用范围失败", f"code={code}, msg={msg}")
     return []
 
@@ -365,6 +373,17 @@ TEST_TERMINALS = [
     {"sn": "20260430200104", "remark": "bd协议测试", "icon": "🛰️", "name": "BD协议测试设备"},
     {"sn": "20260430200105", "remark": "消息测试",    "icon": "📬", "name": "消息测试设备"},
 ]
+# 添加设备必填网关字段。空 {} 现网会 999「失败」（救援棒造数踩过；枚举添加用本结构成功）。
+_GATEWAY_PARAM = {
+    "colorCodeId": 1,
+    "gid": 0,
+    "radioRcvChn": "",
+    "radioSndChn": "",
+    "radioPower": 0,
+    "rxCss": "",
+    "txCss": "",
+    "width": 0,
+}
 
 
 def _create_terminal(base_url, auth_headers, group_id, addr, remark, icon, name):
@@ -382,28 +401,19 @@ def _create_terminal(base_url, auth_headers, group_id, addr, remark, icon, name)
         "trackSize": 5,
         "groupCallNumber": "",
         "ipAddress": "",
-        "gatewayParam": {
-            "colorCodeId": 1,
-            "gid": 0,
-            "radioRcvChn": "",
-            "radioSndChn": "",
-            "radioPower": 0,
-            "rxCss": "",
-            "txCss": "",
-            "width": 0,
-        },
+        "gatewayParam": _GATEWAY_PARAM,
         "fieldJson": "",
     }
     resp = http.send_request(
         method="post", url=url, json=body, headers=auth_headers,
         case_name=f"创建{name}", log_level="none",
     )
-    json_data = resp.json()
-    code = _jsonpath_parse(json_data, "$.code")[0]
+    json_data = parse_response_json(resp, context=f"创建{name}")
+    code = json_data["code"]
     if code == 0:
         key(name, f"创建成功 addr={addr}")
     else:
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else "未知错误"
+        msg = json_data.get("msg") or "未知错误" if _jsonpath_parse(json_data, "$.msg") else "未知错误"
         key(f"⚠️ {name}创建失败(将复用)", f"code={code}, msg={msg}")
     return addr
 
@@ -478,7 +488,7 @@ def _provision_a_rescue_stick(base_url, auth_headers, group_id, label):
         log_level="none",
     )
     json_data = parse_response_json(r, context=f"{label}入库")
-    code = _jsonpath_parse(json_data, "$.code")[0]
+    code = json_data["code"]
     if code != 0:
         msg = _jsonpath_parse(json_data, "$.msg")
         pytest.fail(f"{label}入库失败: code={code}, msg={msg[0] if msg else '未知'}")
@@ -496,7 +506,8 @@ def _provision_a_rescue_stick(base_url, auth_headers, group_id, label):
         "sn": sn, "remark": "天通救援棒-tmn", "groupId": group_id,
         "terminalType": "TT_RESCUE_STICK", "useScope": "STEAMER",
         "fromAddr": "", "trackColor": "#141323", "trackSize": 5,
-        "groupCallNumber": "", "ipAddress": "", "gatewayParam": {}, "fieldJson": "",
+        "groupCallNumber": "", "ipAddress": "",
+        "gatewayParam": _GATEWAY_PARAM, "fieldJson": "",
     }
     r = http.send_request(
         method="post",
@@ -505,7 +516,7 @@ def _provision_a_rescue_stick(base_url, auth_headers, group_id, label):
         case_name=f"{label}添加", log_level="none",
     )
     json_data = parse_response_json(r, context=f"{label}添加")
-    code = _jsonpath_parse(json_data, "$.code")[0]
+    code = json_data["code"]
     if code != 0:
         msg = _jsonpath_parse(json_data, "$.msg")
         pytest.fail(f"{label}添加失败: code={code}, msg={msg[0] if msg else '未知'}")
@@ -533,6 +544,17 @@ def rescue_sat_terminal_c(base_url, auth_headers, group_fixture):
     )
 
 
+@pytest.fixture(scope="session")
+def rescue_sat_terminal_c2(base_url, auth_headers, group_fixture):
+    """对讲群多设备探针专用第二根 A 名下救援棒。
+
+    与 rescue_sat_terminal_c 隔离，避免同一终端在两个活跃对讲/SOS 群之间互斥。
+    """
+    return _provision_a_rescue_stick(
+        base_url, auth_headers, group_fixture["one_id"], "A棒C2",
+    )
+
+
 # B 测试分组（session 内两根棒共用一个 L1）。payload 自带 B headers——
 # cleanup_test_data 的 ctx.auth_headers 是 A 的，不能拿来删 B 的组/设备。
 _B_STACK = {"one_id": None, "auth_headers": None}
@@ -553,7 +575,7 @@ def _ensure_b_l1_group(base_url, auth_headers_b):
         log_level="none",
     )
     json_data = parse_response_json(resp, context="创建B一级分组")
-    code = _jsonpath_parse(json_data, "$.code")[0]
+    code = json_data["code"]
     if code != 0:
         msg = _jsonpath_parse(json_data, "$.msg")
         pytest.fail(f"B一级分组创建失败: code={code}, msg={msg[0] if msg else '未知'}")
@@ -590,7 +612,7 @@ def _provision_b_rescue_stick(base_url, auth_headers_b, label):
         headers=auth_headers_b, case_name=f"{label}入库", log_level="none",
     )
     json_data = parse_response_json(r, context=f"{label}入库")
-    code = _jsonpath_parse(json_data, "$.code")[0]
+    code = json_data["code"]
     if code != 0:
         msg = _jsonpath_parse(json_data, "$.msg")
         pytest.fail(f"{label}入库失败: code={code}, msg={msg[0] if msg else '未知'}")
@@ -604,7 +626,8 @@ def _provision_b_rescue_stick(base_url, auth_headers_b, label):
         "sn": sn, "remark": "天通救援棒-tmn", "groupId": group_id,
         "terminalType": "TT_RESCUE_STICK", "useScope": "STEAMER",
         "fromAddr": "", "trackColor": "#141323", "trackSize": 5,
-        "groupCallNumber": "", "ipAddress": "", "gatewayParam": {}, "fieldJson": "",
+        "groupCallNumber": "", "ipAddress": "",
+        "gatewayParam": _GATEWAY_PARAM, "fieldJson": "",
     }
     r = http.send_request(
         method="post",
@@ -613,7 +636,7 @@ def _provision_b_rescue_stick(base_url, auth_headers_b, label):
         case_name=f"{label}添加", log_level="none",
     )
     json_data = parse_response_json(r, context=f"{label}添加")
-    code = _jsonpath_parse(json_data, "$.code")[0]
+    code = json_data["code"]
     if code != 0:
         msg = _jsonpath_parse(json_data, "$.msg")
         pytest.fail(f"{label}添加失败: code={code}, msg={msg[0] if msg else '未知'}")
@@ -762,7 +785,8 @@ def emergency_chat_voice(base_url, auth_headers, emergency_chat_item, rescue_cli
             case_name=f"语音落库确认第{i+1}轮",
             log_level="none",
         )
-        items = _jsonpath_parse(r.json(), "$.data.items[*]") or []
+        record_page = parse_response_json(r, context=f"语音落库确认第{i+1}轮")
+        items = _jsonpath_parse(record_page, "$.data.items[*]") or []
         voice_record = next((it for it in items if it.get("sendType") == "VOICE"
                              and str(it.get("avatarInfo", {}).get("memberAccount") or "") == sn), None)
         if voice_record:
@@ -790,30 +814,137 @@ def _im_jp1(data, expr):
 
 
 @pytest.fixture(scope="session")
-def intercom_message_group(base_url, auth_headers, rescue_sat_terminal_c,
-                           rescue_client) -> dict:
-    """对讲群「消息域」造数主链（session 级，约 4~5 分钟；计划 §3.3）。
+def intercom_message_group(base_url, auth_headers, auth_headers_b,
+                           rescue_sat_terminal_c, rescue_sat_terminal_c2,
+                           rescue_sat_terminal_b4, rescue_client) -> dict:
+    """对讲群「消息域」三设备造数主链（session 级，实测约 80~90s；
+    plan/intercom-message-multi-device.plan.md，2026-08-24 探针实测）。
 
-    ① PUT intercom/group/create（扣 20 豆）——建成即 register_intercom_group（tier 100）
-    ② POST intercom/group/invitation 邀 A棒C（扣 10 豆，confirm=1 直接入群）
-    ③ 5 次终端上行，相邻间隔 > 60s（协议硬约束，2026-08-17 定稿）：
-       flag=1 按键SOS → flag=2 落水SOS → flag=0 心跳 → flag=10 取消SOS → 语音
-    ④ 每步落库闸门：轮询 message/page（发送成功 ≠ 落库，10304 异步 UDP）
-    ⑤ SOS 伴生群捕获：flag=1 后轮询 emergency/chat/item/page?itemName=sn
+    设备分工（62s 间隔为终端级——探针实测跨设备仅 0.03s 即被接受）：
+      A账号 key_sos  (A棒C):  flag=1 按键SOS → flag=10 取消SOS
+      A账号 water_sos(A棒C2): flag=2 落水SOS → flag=0 心跳解除
+      B账号 voice    (B棒4):  跨账号入群后发 VOICE，复用成员侧已读能力
 
-    逐步快照全部随返回值带出（`totals` / `sosRecords`），下游「零增长」「双群一致性」
-    断言直接读快照，不重发上行——重发一次要多等 60s，且会污染消息数。
+    ① 建群（20 豆）→ register_intercom_group（tier 100）
+    ② A棒C/C2 先入群并完成第一波 SOS 上行；双 TEXT 已落库后，B 仍是非成员。
+    ③ 用已存在的 msg_a 分别采 B 非成员 page 与 receive/info 权限证据，再邀请 B棒4
+       走 PENDING→B AGREED；这样权限证据具备“目标消息真实存在”的 required 前提。
+    ④ 冷却后 A棒C2 flag0、A棒C flag10 结束双 SOS；B棒4 speech 产生 VOICE，
+       复核三设备成员、A/B 两侧可见性及 VOICE 不得落入任一 SOS 记录。
+
+    seed 一次性切换为多设备结构（devices/messagesByRole/sosGroups/snapshots/…），
+    不保留 sn/sosChatItemId/sosRecords 旧字段——漏改以 KeyError 显性暴露。
     """
     from common.cleanup import register_intercom_group
 
-    sn = rescue_sat_terminal_c
+    roles = {
+        "key_sos": {"sn": rescue_sat_terminal_c, "account": "A"},
+        "water_sos": {"sn": rescue_sat_terminal_c2, "account": "A"},
+        "voice": {"sn": rescue_sat_terminal_b4, "account": "B"},
+    }
+    sn_a = roles["key_sos"]["sn"]
+    sn_b = roles["water_sos"]["sn"]
+    sn_c = roles["voice"]["sn"]
     name = f"AUTO_IM_{time.strftime('%H%M%S')}"  # 群名上限 15 字符
-    sep(" 📣 对讲群消息域造数 ")
+    timing = {"startedAt": time.monotonic()}
+    sep(" 📣 对讲群消息域三设备造数 ")
 
-    def _fail(reason):
-        records = rescue_client.session_records(terminal_id=sn, page_size=3)
-        logs = rescue_client.message_logs(terminal_id=sn, page_size=3)
-        pytest.fail(f"{reason}\n  10304会话记录: {records}\n  消息日志: {logs}")
+    def _fail(reason, **_kwargs):
+        detail = {}
+        for role, info in roles.items():
+            sn = info["sn"]
+            detail[role] = {
+                "sn": sn,
+                "sessions": rescue_client.session_records(terminal_id=sn, page_size=3),
+                "messages": rescue_client.message_logs(terminal_id=sn, page_size=3),
+            }
+        pytest.fail(f"{reason}\n  10304诊断: {detail}")
+
+    def _msg_page():
+        res = http.send_request(
+            "get", f"{base_url}/api/monitor/intercom/message/page",
+            params={"intercomGroupId": gid, "page": 1, "pageSize": 100},
+            headers=auth_headers, case_name="消息域分页", log_level="none",
+        )
+        return parse_response_json(res, context="消息域分页")
+
+    def _items():
+        return _jsonpath_parse(_msg_page(), "$.data.items[*]") or []
+
+    def _member_sns():
+        res = http.send_request(
+            "get", f"{base_url}/api/monitor/intercom/group/terminal/list",
+            params={"intercomGroupId": gid}, headers=auth_headers,
+            case_name="消息域成员列表", log_level="none",
+        )
+        data = parse_response_json(res, context="消息域成员列表")
+        return [str(x) for x in (_jsonpath_parse(data, "$.data[*].addr") or [])]
+
+    def _snapshot(tag):
+        body = _msg_page()
+        its = _jsonpath_parse(body, "$.data.items[*]") or []
+        snap = {"total": _im_jp1(body, "$.data.total"), "count": len(its),
+                "sendTypes": [i.get("sendType") for i in its], "items": its}
+        key(f"快照-{tag}", f"total={snap['total']} {snap['sendTypes']}")
+        return snap
+
+    def _find(rows, sn, send_type, token, baseline):
+        for m in rows:
+            if m.get("id") in baseline:
+                continue
+            if str((m.get("avatarInfo") or {}).get("memberAccount")) != str(sn):
+                continue
+            if m.get("sendType") != send_type:
+                continue
+            if token and token not in str(m.get("content") or ""):
+                continue
+            return m
+        return None
+
+    def _wait(label, fn, rounds=10, interval=2):
+        last = None
+        for _ in range(rounds):
+            last = fn()
+            if last:
+                return last
+            time.sleep(interval)
+        _fail(f"等待超时({label}): last={last}")
+
+    def _sos_items(sn):
+        res = http.send_request(
+            "get", f"{base_url}/api/monitor/emergency/chat/item/page",
+            params={"itemName": sn, "page": 1, "pageSize": 10}, headers=auth_headers,
+            case_name=f"SOS伴生群查询-{sn}", log_level="none",
+        )
+        data = parse_response_json(res, context=f"SOS伴生群查询-{sn}")
+        return _jsonpath_parse(data, "$.data.items[*]") or []
+
+    def _send(tag, sn, kind):
+        result = (rescue_client.send_speech(sn) if kind == "speech"
+                  else rescue_client.send_position(sn, report_flag=kind))
+        if not result.success:
+            key("会话兜底", f"{tag} 失败(code={result.code})，login_terminal 重建后重发")
+            rescue_client.login_terminal(sn)
+            result = (rescue_client.send_speech(sn) if kind == "speech"
+                      else rescue_client.send_position(sn, report_flag=kind))
+        if not result.success:
+            _fail(f"{tag} 上行失败: code={result.code}, msg={result.message}")
+        key(f"上行-{tag}", f"sn={sn} sid={result.session_id}")
+        return time.monotonic()
+
+    def _invite(sn):
+        r = http.send_request(
+            "post", f"{base_url}/api/monitor/intercom/group/invitation",
+            json={"intercomGroupId": gid, "addrInfos": [{"addr": sn}], "force": False},
+            headers=auth_headers, case_name=f"消息域邀请-{sn}", log_level="none",
+        )
+        data = parse_response_json(r, context=f"消息域邀请-{sn}")
+        if _im_jp1(data, "$.code") != 0:
+            _fail(
+                f"邀请 {sn} 失败",
+                name="intercom member invitation",
+                expected=0, actual=data, evidence="intercom/group/invitation",
+            )
 
     # ① 建群
     r = http.send_request(
@@ -824,141 +955,238 @@ def intercom_message_group(base_url, auth_headers, rescue_sat_terminal_c,
     data = parse_response_json(r, context="消息域建群")
     gid = _im_jp1(data, "$.data.id")
     if _im_jp1(data, "$.code") != 0 or not gid:
-        pytest.fail(f"消息域建群失败: {data}")
+        _fail(
+            "消息域建群失败",
+            name="intercom group creation",
+            expected={"code": 0, "id": "non-empty"}, actual=data,
+            evidence="intercom/group/create",
+        )
     register_intercom_group(gid)
     key("消息域对讲群", f"{gid} name={name}")
+    timing["groupCreated"] = time.monotonic()
 
-    # ② 邀 A棒C 入群
-    r = http.send_request(
-        "post", f"{base_url}/api/monitor/intercom/group/invitation",
-        json={"intercomGroupId": gid, "addrInfos": [{"addr": sn}], "force": False},
-        headers=auth_headers, case_name="消息域邀A棒C", log_level="none",
-    )
-    data = parse_response_json(r, context="消息域邀A棒C")
-    if _im_jp1(data, "$.code") != 0:
-        pytest.fail(f"消息域邀请失败: {data}")
-    r = http.send_request(
-        "get", f"{base_url}/api/monitor/intercom/group/terminal/list",
-        params={"intercomGroupId": gid}, headers=auth_headers,
-        case_name="消息域成员复核", log_level="none",
-    )
-    members = _jsonpath_parse(r.json(), "$.data[*].addr") or []
-    if sn not in members:
-        pytest.fail(f"消息域造数棒未入群: sn={sn} members={members}")
-    key("入群复核", f"{sn} 已在成员列表（{len(members)} 台）")
-
-    def snapshot(tag):
-        res = http.send_request(
-            "get", f"{base_url}/api/monitor/intercom/message/page",
-            params={"intercomGroupId": gid, "page": 1, "pageSize": 100},
-            headers=auth_headers, case_name=f"消息落库快照-{tag}", log_level="none",
+    # ② 先让两台 A 设备入群；B 保持非成员，待真实消息落库后再取权限证据。
+    _invite(sn_a)
+    _invite(sn_b)
+    members_before_b = _member_sns()
+    expected_before_b = {sn_a, sn_b}
+    if set(members_before_b) != expected_before_b:
+        _fail(
+            "B入群前成员集合不符",
+            name="membership before non-member evidence",
+            expected=expected_before_b, actual=set(members_before_b), evidence="group terminal/list",
         )
-        body = parse_response_json(res, context=f"消息落库快照-{tag}")
-        its = _jsonpath_parse(body, "$.data.items[*]") or []
-        return {"total": _im_jp1(body, "$.data.total"), "count": len(its),
-                "sendTypes": [i.get("sendType") for i in its], "items": its}
+    timing["membershipA"] = time.monotonic()
 
-    def wait_landed(tag, want):
-        snap = None
-        for _ in range(8):
-            snap = snapshot(tag)
-            if snap["count"] >= want:
-                key(f"落库-{tag}", f"{snap['count']} 条 {snap['sendTypes']}")
-                return snap
-            time.sleep(2)
-        _fail(f"消息未落库({tag}): 期望 ≥{want} 条，实际 {(snap or {}).get('count')} 条")
+    # ③ 第一波上行先造出可读取的消息，再采 B 非成员 page/receive-info 权限证据。
+    baseline = {m.get("id") for m in _items()}
+    totals = {"baseline": len(baseline)}
+    sent_at = {}
 
-    def send_uplink(tag, kind):
-        result = (rescue_client.send_speech(sn) if kind == "speech"
-                  else rescue_client.send_position(sn, report_flag=kind))
-        if not result.success:
-            key("会话兜底", f"{tag} 失败(code={result.code})，login_terminal 重建后重发")
-            rescue_client.login_terminal(sn)
-            result = (rescue_client.send_speech(sn) if kind == "speech"
-                      else rescue_client.send_position(sn, report_flag=kind))
-        if not result.success:
-            _fail(f"{tag} 上行失败: code={result.code}, msg={result.message}")
-        key(f"上行-{tag}", f"sid={result.session_id}")
+    sent_at[sn_a] = _send("flag=1按键SOS", sn_a, 1)
+    sent_at[sn_b] = _send("flag=2落水SOS", sn_b, 2)
+    key("跨设备间隔", f"{sent_at[sn_b] - sent_at[sn_a]:.2f}s（终端级限制已探针证实）")
 
-    def gap(label):
-        sep(f" ⏳ 上行间隔合规等待 {IM_UPLINK_GAP:.0f}s（{label}） ")
-        time.sleep(IM_UPLINK_GAP)
+    msg_a = _wait("key_sos TEXT 落库", lambda: _find(
+        _items(), sn_a, "TEXT", "触发SOS报警", baseline))
+    msg_b = _wait("water_sos TEXT 落库", lambda: _find(
+        _items(), sn_b, "TEXT", "触发落水报警", baseline))
+    totals["afterSos"] = len(_items())
 
-    def sos_group():
-        res = http.send_request(
-            "get", f"{base_url}/api/monitor/emergency/chat/item/page",
-            params={"itemName": sn, "page": 1, "pageSize": 10}, headers=auth_headers,
-            case_name="SOS伴生群查询", log_level="none",
+    sos_a = _wait("SOS-A 捕获", lambda: next(
+        (x for x in _sos_items(sn_a) if x.get("status") == 1), None))
+    sos_b = _wait("SOS-B 捕获", lambda: next(
+        (x for x in _sos_items(sn_b) if x.get("status") == 1), None))
+    key("双SOS伴生群", f"A={sos_a.get('id')} B={sos_b.get('id')}")
+    timing["sosLanding"] = time.monotonic()
+
+    # 消息存在性是权限证据的 required 前提；禁止在空群上用 code=0 冒充越权读取证据。
+    if not msg_a.get("id") or not msg_b.get("id"):
+        _fail(
+            "非成员权限取证前消息不存在",
+            name="message exists before authorization evidence",
+            expected="two landed message ids", actual={"key_sos": msg_a, "water_sos": msg_b},
+            evidence="message/page",
         )
-        its = _jsonpath_parse(res.json(), "$.data.items[*]") or []
-        return its[0] if its else None
+    non_member_page_response = http.send_request(
+        "get", f"{base_url}/api/monitor/intercom/message/page",
+        params={"intercomGroupId": gid, "page": 1, "pageSize": 100},
+        headers=auth_headers_b, case_name="B非成员查询消息快照", log_level="none",
+    )
+    non_member_body = parse_response_json(
+        non_member_page_response, context="B非成员查询消息快照",
+    )
+    non_member_items = _jsonpath_parse(non_member_body, "$.data.items[*]") or []
+    access_b_non_member_page = {
+        "code": _im_jp1(non_member_body, "$.code"),
+        "msg": _im_jp1(non_member_body, "$.msg"),
+        "count": len(non_member_items),
+        "ids": [item.get("id") for item in non_member_items],
+        "evidenceMessageIds": [msg_a.get("id"), msg_b.get("id")],
+    }
+    non_member_receive_response = http.send_request(
+        "get", f"{base_url}/api/monitor/intercom/message/receive/info",
+        params={"intercomMessageId": msg_a["id"]}, headers=auth_headers_b,
+        case_name="B非成员查询接收明细快照", log_level="none",
+    )
+    parse_response_json(non_member_receive_response, context="B非成员查询接收明细快照")
+    timing["authorizationEvidence"] = time.monotonic()
 
-    totals = {"baseline": snapshot("上行前")["total"]}
-
-    # ③④⑤ 五次上行 + 逐步落库闸门
-    send_uplink("flag=1按键SOS", 1)
-    totals["flag1"] = wait_landed("flag=1后", 1)["total"]
-    sos = None
-    for _ in range(5):
-        sos = sos_group()
-        if sos:
+    # 权限证据完成后再邀请 B棒4，保持三设备与 B 成员侧后续验证链。
+    _invite(sn_c)
+    notice = None
+    for _ in range(10):
+        res = http.send_request(
+            "get", f"{base_url}/api/monitor/intercom/message/send/invitation/list",
+            params={"intercomGroupId": gid, "status": "PENDING",
+                    "page": 1, "pageSize": 50},
+            headers=auth_headers, case_name="消息域查PENDING通知", log_level="none",
+        )
+        invitation_page = parse_response_json(res, context="消息域查PENDING通知")
+        notice = next((item for item in (_jsonpath_parse(invitation_page, "$.data.items[*]") or [])
+                       if item.get("addr") == sn_c), None)
+        if notice:
             break
-        time.sleep(2)
-    if sos:
-        key("SOS伴生群", f"{sos.get('id')} itemName={sos.get('itemName')} "
-                         f"status={sos.get('status')}")
+        time.sleep(1)
+    if not notice:
+        _fail(
+            "B棒4 PENDING 通知未出现",
+            name="B invitation notice",
+            expected=sn_c, actual=notice, evidence="invitation/list",
+        )
+    r = http.send_request(
+        "put", f"{base_url}/api/monitor/intercom/message/invitation/handler",
+        params={"handlerType": "AGREED", "invitationNoticeId": notice["id"]},
+        headers=auth_headers_b, case_name="消息域B同意入群", log_level="none",
+    )
+    data = parse_response_json(r, context="消息域B同意入群")
+    if _im_jp1(data, "$.code") != 0:
+        _fail(
+            "B棒4 同意入群失败",
+            name="B invitation accepted",
+            expected=0, actual=data, evidence="invitation/handler",
+        )
+    members = _member_sns()
+    expected = {sn_a, sn_b, sn_c}
+    if set(members) != expected:
+        _fail(
+            "三设备成员集合不符",
+            name="exact three-device membership",
+            expected=expected, actual=set(members), evidence="group terminal/list",
+        )
+    key("入群复核", f"三设备满员 {sorted(members)}")
+    timing["membership"] = time.monotonic()
 
-    gap("flag=1 → flag=2")
-    send_uplink("flag=2落水SOS", 2)
-    totals["flag2"] = wait_landed("flag=2后", 2)["total"]
+    remain = max(IM_UPLINK_GAP - (time.monotonic() - sent_at[sn]) for sn in (sn_a, sn_b))
+    if remain > 0:
+        sep(f" ⏳ 双设备冷却钟 {remain:.0f}s ")
+        time.sleep(remain)
+    timing["cooldown"] = time.monotonic()
 
-    gap("flag=2 → flag=0")
-    send_uplink("flag=0心跳", 0)
-    time.sleep(8)  # 心跳不产对讲群消息，无可等的落库信号，固定观察窗
-    totals["flag0"] = snapshot("flag=0后")["total"]
+    _send("flag=0心跳", sn_b, 0)
+    _send("flag=10取消SOS", sn_a, 10)
 
-    gap("flag=0 → flag=10")
-    send_uplink("flag=10取消SOS", 10)
-    time.sleep(8)
-    totals["flag10"] = snapshot("flag=10后")["total"]
-    sos_after = sos_group()
+    def _closed(sn, chat_id):
+        return next((x for x in _sos_items(sn)
+                     if str(x.get("id")) == str(chat_id) and x.get("status") == 0), None)
 
-    gap("flag=10 → 语音")
-    send_uplink("语音", "speech")
-    final = wait_landed("语音后", 3)
-    totals["speech"] = final["total"]
+    sos_a_end = _wait("SOS-A 关闭", lambda: _closed(sn_a, sos_a["id"]))
+    sos_b_end = _wait("SOS-B 关闭", lambda: _closed(sn_b, sos_b["id"]))
+    totals["afterClose"] = _snapshot("双SOS关闭后")["total"]
+    timing["sosClosed"] = time.monotonic()
 
-    # SOS 侧同期记录（双落群一致性证据源）
-    sos_records = {"total": None, "sendTypes": [], "chatTimes": []}
-    if sos:
+    # ④ B棒4 语音
+    _send("语音", sn_c, "speech")
+    msg_c = _wait("voice VOICE 落库", lambda: _find(
+        _items(), sn_c, "VOICE", None, baseline))
+    b_res = http.send_request(
+        "get", f"{base_url}/api/monitor/intercom/message/page",
+        params={"intercomGroupId": gid, "page": 1, "pageSize": 100},
+        headers=auth_headers_b, case_name="B成员侧查语音", log_level="none",
+    )
+    b_items = _jsonpath_parse(parse_response_json(
+        b_res, context="B成员侧查语音"), "$.data.items[*]") or []
+    if not any(m.get("id") == msg_c.get("id") for m in b_items):
+        _fail(
+            "B成员侧看不到 VOICE",
+            name="B member voice visibility",
+            expected=msg_c.get("id"), actual=[m.get("id") for m in b_items],
+            evidence="message/page E4",
+        )
+    totals["speech"] = _snapshot("语音后")["total"]
+    final_items = _items()
+    timing["voiceLanding"] = time.monotonic()
+    timing["total"] = timing["voiceLanding"] - timing["startedAt"]
+
+    # SOS 侧记录（按设备分别取证）
+    def _sos_records(chat_id):
         res = http.send_request(
             "get", f"{base_url}/api/monitor/emergency/chat/record/page",
-            params={"chatItemId": sos.get("id"), "page": 1, "pageSize": 50},
-            headers=auth_headers, case_name="SOS侧记录", log_level="none",
+            params={"chatItemId": chat_id, "page": 1, "pageSize": 50},
+            headers=auth_headers, case_name=f"SOS侧记录-{chat_id}", log_level="none",
         )
-        body = res.json()
+        body = parse_response_json(res, context=f"SOS侧记录-{chat_id}")
         its = _jsonpath_parse(body, "$.data.items[*]") or []
-        sos_records = {
+        return {
             "total": _im_jp1(body, "$.data.total"),
             "sendTypes": [i.get("sendType") for i in its],
             "chatTimes": [i.get("chatTime") for i in its],
+            "items": its,
         }
-    key("造数完成", f"对讲群 {totals['speech']} 条 {final['sendTypes']}；"
-                    f"SOS 侧 {sos_records['total']} 条 {sos_records['sendTypes']}")
+
+    sos_groups = {
+        "key_sos": {"chatItemId": sos_a["id"], "terminalSn": sn_a,
+                    "statusAfterEnd": sos_a_end.get("status"),
+                    "records": _sos_records(sos_a["id"])},
+        "water_sos": {"chatItemId": sos_b["id"], "terminalSn": sn_b,
+                      "statusAfterEnd": sos_b_end.get("status"),
+                      "records": _sos_records(sos_b["id"])},
+    }
+    leaked_voice = [
+        role for role, g in sos_groups.items()
+        if any(r.get("sendType") == "VOICE" for r in g["records"]["items"])
+    ]
+    if leaked_voice:
+        _fail(
+            "VOICE 泄漏到 SOS 群",
+            name="voice absent from non-target SOS groups",
+            expected=[], actual=leaked_voice, evidence="emergency chat record/page E3",
+        )
+
+    for role in roles:
+        roles[role]["actions"] = (["flag=1", "flag=10"] if role == "key_sos"
+                                  else ["flag=2", "flag=0"] if role == "water_sos"
+                                  else ["speech"])
+    key("造数完成", f"对讲群 {totals['speech']} 条；耗时 {timing['total']:.0f}s；"
+                    f"VOICE 仅落对讲群")
+    if timing["total"] > 90:
+        key("⚠️ 耗时超标(观测项)", f"{timing['total']:.0f}s > 90s 目标，分段 {timing}")
 
     return {
-        "groupId": gid,
-        "groupName": name,
-        "sn": sn,
-        "members": members,
-        "messages": final["items"],
-        "messageIds": [i.get("id") for i in final["items"]],
-        "sendTypes": final["sendTypes"],
+        "group": {"id": gid, "name": name, "members": members},
+        "devices": roles,
+        "messagesByRole": {
+            "key_sos": msg_a,
+            "water_sos": msg_b,
+            "voice": msg_c,
+        },
+        "messages": final_items,
+        "messageIds": [m.get("id") for m in final_items],
+        "sosGroups": sos_groups,
         "totals": totals,
-        "sosChatItemId": (sos or {}).get("id"),
-        "sosStatusAfterCancel": (sos_after or {}).get("status"),
-        "sosRecords": sos_records,
-        "created_at": time.time(),
+        "snapshots": {
+            "baseline": totals["baseline"],
+            "afterSos": totals["afterSos"],
+            "afterClose": totals["afterClose"],
+            "speech": totals["speech"],
+        },
+        "accessSnapshots": {
+            "bNonMemberPage": access_b_non_member_page,
+            "bNonMemberReceiveResponse": non_member_receive_response,
+            "bNonMemberReceiveMessageId": msg_a["id"],
+            "bMemberVoiceVisible": any(m.get("id") == msg_c.get("id") for m in b_items),
+        },
+        "timing": timing,
     }
 
 

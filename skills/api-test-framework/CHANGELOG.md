@@ -1,3 +1,37 @@
+## [Unreleased] — 2026-08-28 普通 REST 断言统一
+
+### Added
+- `common.case_report_util.assert_response`：安全解析 JSON、可选 HTTP 校验、统一 `code/msg` 信封断言并返回领域数据。
+- `common.requests_util.get_response_json`：缓存响应 JSON，供请求上下文、日志和断言复用。
+- `jkpt_api_test/unit/test_case_report_util.py`：覆盖正常信封、缺字段、非 JSON、HTTP 可选校验、兼容入口、error_msg 和递归脱敏。
+- `jkpt_api_test/tools/assertion_lint.py`：静态阻止普通 testcase 直接 `.json()`、手工解析 `$.code/$.msg` 或直连底层断言；`unit/test_assertion_lint.py` 覆盖扫描规则。
+
+### Changed
+- 13 个普通 REST controller 与验证码 controller 迁移到 `assert_response`；intercom 保留 `send_case/assert_case` 兼容契约和业务 rows。
+- 报警模块增加分页/最新/类型统计结构断言，以及单条、按类型、按 ID 处理前未处理确认和处理后的目标状态轮询；状态字段按 AlarmInfoRespDto 的 NameValueHolder/handleTimeStr 兼容解析，未知状态不默认放行。
+- `BaseRequest`、logger、断言附件与失败 Hook 统一递归脱敏；请求/响应已由传输层附加时 Hook 不重复附加。
+- 协议 `result.success`、xlsx/KML/二进制导出专用断言保持不变。
+
+### Security
+- 请求、响应、业务上下文和扩展 rows 按键与值脱敏 Token、密码、验证码、手机号和邮箱。
+
+---
+
+## [Unreleased] — 2026-08-28 验证码接口测试与 PII 脱敏
+
+### Added
+- `jkpt_api_test/testcases/test_ver_code_controller.py`：7 个 `ver-codes` 发送接口的一类一接口 YAML 驱动测试，真实短信/邮件默认关闭，限频探测显式开关控制。
+- `jkpt_api_test/yaml/test_ver_code_controller.yaml`：公共必填、格式、mode/to 不匹配、Authorization 通道和响应安全场景。
+- `jkpt_api_test/unit/test_ver_code_support.py`：验证码请求日志/Allure 上下文的手机号、邮箱、Token 脱敏最小验证。
+- `common/requests_util.py`：响应 JSON 缓存与递归敏感信息脱敏能力（由运行时工作区已有实现承接）。
+- `common/logger_util.py`：请求、响应、键值日志复用结构化 PII 脱敏。
+
+### Security
+- 验证码测试的 Authorization、验证码不写入源码和报告明文；YAML 仅保留主人明确授权的两个专用测试接收端，运行日志与报告仍必须脱敏。
+- 真实发送和低次数频控探测分别受 `JKPT_ENABLE_VER_CODE_DELIVERY`、`JKPT_ENABLE_VER_CODE_ABUSE_TEST` 控制。
+
+---
+
 ## [Unreleased] — 2026-08-19 glht 入库记录清理改为精确登记
 
 ### Fixed

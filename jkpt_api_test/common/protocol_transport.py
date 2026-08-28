@@ -41,6 +41,7 @@ class BDProtocolTransport:
         from_addr: str,
         case_name: str = "",
         to_addr: Optional[str] = None,
+        timeout: Optional[float] = None,
     ) -> ProtocolSendResult:
         """发送 bd 协议数据（单地址）"""
         return self.send_bd_content_batch(
@@ -48,6 +49,7 @@ class BDProtocolTransport:
             from_addrs=[from_addr],
             case_name=case_name,
             to_addr=to_addr,
+            timeout=timeout,
         )
 
     def send_bd_content_batch(
@@ -56,6 +58,7 @@ class BDProtocolTransport:
         from_addrs: list,
         case_name: str = "",
         to_addr: Optional[str] = None,
+        timeout: Optional[float] = None,
     ) -> ProtocolSendResult:
         """批量发送 bd 协议数据（多地址 / 多内容）
 
@@ -106,6 +109,7 @@ class BDProtocolTransport:
             url=url,
             json=body,
             headers=clean_headers,
+            timeout=timeout,
             case_name=case_name or "发送BD协议",
         )
 

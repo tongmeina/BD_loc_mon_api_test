@@ -16,10 +16,10 @@ import pytest
 import re
 import time
 
-from common.allure_assert_util import assert_api_result
+from common.case_report_util import assert_response
 from common.logger_util import key, print_request, print_response, sep
-from common.requests_util import BaseRequest
-from common.yaml_util import is_extract_placeholder, read_expected_msg, read_yaml, resolve_extract_value, write_yaml
+from common.requests_util import BaseRequest, parse_response_json
+from common.yaml_util import is_extract_placeholder, read_yaml, resolve_extract_value, write_yaml
 
 _jsonpath_parse = jsonpath.jsonpath
 http = BaseRequest()
@@ -72,7 +72,7 @@ def _purge_stale_test_enclosures(base_url, auth_headers):
             case_name="teardown-list-stale",
             log_level="none",
         )
-        data = res.json()
+        data = parse_response_json(res, context="teardown-list-stale")
     except Exception as exc:
         key("teardown-list-失败", str(exc))
         return
@@ -136,23 +136,9 @@ class _EnclosureHelpers:
         return []
 
     def _assert_and_report(self, case, res):
-        json_data = res.json()
-        code = _jp_first(json_data, "$.code")
-        msg = _jp_first(json_data, "$.msg") or ""
-
-        exp_msg = read_expected_msg(case["expected"])
-        sep(" 断言结果 ")
-        key("预期 code", case["expected"]["code"])
-        key("实际 code", code)
-        key("预期 msg", exp_msg)
-        key("实际 msg", msg)
-
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=exp_msg,
-            actual_code=code,
-            actual_msg=msg,
+        return assert_response(
+            case,
+            res,
             biz_context={"请求用例": case["name"]},
         )
 
@@ -202,9 +188,8 @@ class TestEn01EnclosureAdd(_EnclosureHelpers):
             log_level="none",
         )
         print_response(res)
-
-        json_data = res.json()
-        code = _jp_first(json_data, "$.code")
+        json_data = self._assert_and_report(case, res)
+        code = json_data["code"]
         if code == 0:
             eid = _jp_first(json_data, "$.data.id")
             _append_cleanup_id(eid)
@@ -216,8 +201,6 @@ class TestEn01EnclosureAdd(_EnclosureHelpers):
                 if share_code:
                     payload["enclosure_share_code"] = share_code
                 write_yaml("./extract.yaml", payload, mode="append")
-
-        self._assert_and_report(case, res)
 
 
 class TestEn02EnclosureList(_EnclosureHelpers):
@@ -239,12 +222,12 @@ class TestEn02EnclosureList(_EnclosureHelpers):
             log_level="none",
         )
         print_response(res)
-        self._assert_and_report(case, res)
+        json_data = self._assert_and_report(case, res)
 
         if case.get("no_auth"):
             return
         eid = resolve_extract_value(case.get("enclosureId"), required=True)
-        ids = self._list_ids(res.json())
+        ids = self._list_ids(json_data)
         assert str(eid) in ids, f"列表未包含创建的围栏 id={eid}，实际 ids={ids[:20]}"
 
 
@@ -350,16 +333,13 @@ class TestEn06EnclosureAddByCode(_EnclosureHelpers):
             log_level="none",
         )
         print_response(res)
-
-        json_data = res.json()
-        code = _jp_first(json_data, "$.code")
+        json_data = self._assert_and_report(case, res)
+        code = json_data["code"]
         if code == 0:
             cloned_id = _jp_first(json_data, "$.data.id")
             _append_cleanup_id(cloned_id)
             if case["name"] == "围栏-分享码添加-正向" and cloned_id:
                 write_yaml("./extract.yaml", {"enclosure_cloned_id": cloned_id}, mode="append")
-
-        self._assert_and_report(case, res)
 
 
 class TestEn07EnclosureDelete(_EnclosureHelpers):

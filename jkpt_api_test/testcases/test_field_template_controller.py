@@ -12,9 +12,9 @@ import jsonpath
 import pytest
 import time
 from common.requests_util import BaseRequest
-from common.yaml_util import read_yaml, write_yaml, resolve_extract_value, is_extract_placeholder, read_expected_msg
-from common.logger_util import sep, key, print_request, print_response
-from common.allure_assert_util import assert_api_result
+from common.yaml_util import read_yaml, write_yaml, resolve_extract_value, is_extract_placeholder
+from common.logger_util import sep, print_request, print_response
+from common.case_report_util import assert_response
 
 _jsonpath_parse = jsonpath.jsonpath
 http = BaseRequest()
@@ -32,24 +32,11 @@ class _FieldTemplateHelpers:
             name = name.replace("{int(time.time())}", str(int(time.time())))
         return name
 
-    def _assert_and_report(self, case, res):
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        raw_msg = _jsonpath_parse(json_data, "$.msg")
-        msg = raw_msg[0] if raw_msg else "未知错误"
-
-        sep(" 断言结果 ")
-        key("预期 code", case["expected"]["code"])
-        key("实际 code", code)
-        key("预期 msg", read_expected_msg(case["expected"]))
-        key("实际 msg", msg)
-
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=read_expected_msg(case["expected"]),
-            actual_code=code,
-            actual_msg=msg,
+    def _assert_and_report(self, case, response, biz_context=None):
+        return assert_response(
+            case,
+            response,
+            biz_context=biz_context or {"请求用例": case["name"]},
         )
 
 
@@ -98,15 +85,16 @@ class TestFt02FieldTemplateAdd(_FieldTemplateHelpers):
             log_level="none",
         )
         print_response(res)
-
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
+        json_data = self._assert_and_report(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        code = json_data["code"]
         if code == 0 and case.get("name") == "字段模板-创建-正向":
             tid = _jsonpath_parse(json_data, "$.data.id")
             if tid:
                 write_yaml("./extract.yaml", {"field_template_id": tid[0]}, mode="append")
-
-        self._assert_and_report(case, res)
 
 
 class TestFt03FieldTemplateUpdate(_FieldTemplateHelpers):

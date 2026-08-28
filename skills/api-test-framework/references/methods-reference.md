@@ -10,6 +10,7 @@
 - [10. common/ipconfig.py](#10-commonipconfigpy)
 - [11. common/common_data.py](#11-commoncommon_datapy)
 - [12. common/allure_assert_util.py](#12-commonallure_assert_utilpy)
+- [12a. common/case_report_util.py（统一响应信封入口）](#12a-commoncase_report_utilpy统一响应信封入口)
 - [13. common/logger_util.py](#13-commonlogger_utilpy)
 - [14. common/captcha_util.py](#14-commoncaptcha_utilpy)
 - [16. common/bd_protocol_client.py（北斗协议客户端）](#16-commonbd_protocol_clientpy)
@@ -88,9 +89,17 @@ class BaseRequest:
 
 响应体为空或无法解析为 JSON 时抛出。属性：`response`、`context`。
 
+### `get_response_json(response) -> Any`
+
+读取并缓存响应 JSON。`BaseRequest`、日志和统一断言复用缓存，避免同一响应被重复解析。
+
 ### `parse_response_json(response, context: str = "") -> dict`
 
-解析响应 JSON；空体或非 JSON 时抛出 `NonJsonResponseError`。fixture 与需要明确失败原因的用例优先用这个，而不是直接 `res.json()`。
+解析响应 JSON object；空体、非 JSON 或 JSON 非 object 时抛出 `NonJsonResponseError`。fixture 与普通响应信封优先用这个，而不是直接 `res.json()`。
+
+### `sanitize_sensitive_data(data, parent_key: str = "") -> Any`
+
+递归脱敏 Authorization、Token、Cookie、密码、验证码字段，以及手机号、邮箱等个人信息。请求上下文、响应上下文、控制台和 Allure 共用。
 
 ---
 
@@ -159,7 +168,7 @@ def get_current_timestamp() -> int:
 
 ## 12. common/allure_assert_util.py
 
-### `assert_api_result(case_name, expected_code, expected_msg, actual_code, actual_msg, biz_context=None) -> None`
+### `assert_api_result(case_name, expected_code, expected_msg, actual_code, actual_msg, biz_context=None, compare_message=True) -> None`
 
 统一接口断言与 Allure 附件输出。
 
@@ -171,16 +180,61 @@ def get_current_timestamp() -> int:
 | actual_code | Any | 实际业务码 |
 | actual_msg | str | 实际错误信息/提示 |
 | biz_context | dict \| None | 业务上下文（可选，建议传请求参数、动态变量） |
+| compare_message | bool | 是否比较消息；统一入口在 YAML 未声明消息时传 `False` |
 
 **行为约定**:
+- 作为底层 `code/msg` 比较器，由 `case_report_util.assert_response` 调用；普通 testcase 不直接调用
 - 断言通过：打印成功日志并附加 `【成功】验证结果` 文本附件
-- 断言失败：附加 `【失败】验证失败上下文` JSON 附件，并抛出带用例名的清晰断言错误
+- 断言失败：附加脱敏后的 `【失败】验证失败上下文` JSON 附件，并抛出带用例名的清晰断言错误
 
 ### `_attach_text(content, name) -> None`
 内部辅助：安全附加 TEXT 附件（allure 不可用时自动跳过）。
 
 ### `_attach_json(data, name) -> None`
 内部辅助：安全附加 JSON 附件（allure 不可用时自动跳过）。
+
+---
+
+## 12a. common/case_report_util.py（统一响应信封入口）
+
+### `assert_response(case, response, biz_context=None, expected_http_status=None) -> dict`
+
+普通 JSON REST 用例的默认入口：
+
+1. 复用缓存安全解析响应 JSON object。
+2. 仅在参数或 `expected.http_status` 明确配置时校验 HTTP 状态。
+3. 明确区分 `msg` 缺失、`null` 与空串。
+4. 校验 YAML `expected.code` 与可选 `msg/error_msg`。
+5. 返回已解析 `json_data`，供领域字段和后置状态断言继续使用。
+
+```python
+from common.case_report_util import assert_response
+
+json_data = assert_response(
+    case,
+    response,
+    biz_context={"请求参数": payload},
+)
+```
+
+### `assert_case(case, json_data, biz_context=None) -> tuple`
+
+兼容入口。保留 intercom 既有 dict 入参和 `(code, msg)` 返回契约；负向用例可在信封通过后按 `code != 0` 提前返回。
+
+### `send_case(http, method, url, case, headers, *, params=None, json=None) -> dict`
+
+兼容 intercom 请求入口。安全解析一次并返回 dict；不改旧调用签名。
+
+### `report_extra_and_assert(title, rows, summary) -> None`
+
+领域 rows 扩展断言。公共层只负责脱敏报告和失败汇总，不解释报警状态、分页守恒、未读幂等等领域语义。
+
+**边界：**
+
+- 协议继续断言 `result.success`。
+- xlsx/KML/二进制导出继续使用专用断言。
+- 前置造数或动态提取失败继续使用 `pytest.fail`。
+- 普通 testcase 不再自行解析 `$.code/$.msg`，也不直接调用底层 `assert_api_result`。
 
 ---
 
@@ -205,7 +259,9 @@ def print_result(success=True, message="") -> None:
 
 **使用建议**:
 - 用例日志统一走该模块，输出风格保持一致
-- 请求输出中应始终对密码、token 等敏感字段脱敏
+- 请求、响应和 Allure 上下文中应始终对密码、token、手机号、邮箱和验证码等敏感字段脱敏
+- `mask_log_data(data, field_name=None)`：递归脱敏结构化日志数据
+- `mask_log_text(text)`：对非 JSON 文本中的手机号和邮箱做脱敏
 
 ---
 

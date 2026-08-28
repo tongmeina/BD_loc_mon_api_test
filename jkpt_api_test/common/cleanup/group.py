@@ -2,7 +2,7 @@
 # tier 300：删除三级测试分组（倒序 three→two→one）。
 # 原样搬迁自 conftest.delete_groups_in_order。
 from common.logger_util import key
-from common.requests_util import BaseRequest
+from common.requests_util import BaseRequest, parse_response_json
 
 _http = BaseRequest()
 
@@ -37,14 +37,14 @@ def delete_groups_in_order(base_url, auth_headers, group_ids):
             log_level="none"
         )
 
-        json_data = resp.json()
-        code = _jp()(json_data, "$.code")[0]
+        json_data = parse_response_json(resp, context=f"删除{level}分组 {group_id}")
+        code = json_data["code"]
         if code == 0:
             success_count += 1
             key(f"✅ 删除{level}分组 {group_id}", "成功")
         else:
             fail_count += 1
-            msg = _jp()(json_data, "$.msg")[0] if _jp()(json_data, "$.msg") else "未知错误"
+            msg = json_data.get("msg") or "未知错误"
             key(f"❌ 删除{level}分组 {group_id} 失败", f"code={code}, msg={msg}")
 
     return success_count, fail_count

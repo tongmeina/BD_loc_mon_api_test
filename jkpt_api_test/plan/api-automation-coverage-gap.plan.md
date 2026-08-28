@@ -1,34 +1,41 @@
 # API 自动化覆盖缺口盘点（P0/P1/P2）
 
 > 生成时间：2026-08-14
-> 数据来源：Apifox 项目「Swagger3接口文档」OAS 实时拉取（x-download-time: 2026-08-14T06:33:06Z）
+> 进度更新时间：2026-08-28
+> 数据来源：Apifox 项目「Swagger3接口文档」OAS 拉取结果（x-download-time: 2026-08-14T06:33:06Z）
 > 比对基准：`jkpt_api_test/testcases/*.py` 中实际请求的接口路径（YAML 数据驱动的执行层）
-> 数值口径：以最新 Apifox 文档为准；接口如有变更请重新拉取比对。
+> 数值口径：沿用原计划人工修正口径；严格按路径变量归一去重时，当前已实现为 77 个 URL。
+> 本次范围调整：排除小程序相关的 `app-users`、`ao-wei`、`share`、`follow-platforms`、`subscription`、微信小程序支付、微信服务通知，共 52 个 URL；其他无法仅凭路径确认归属的接口暂保留。
 
 ---
 
 ## 一、盘点口径说明（先读，避免误读数字）
 
-1. **粒度**：按 URL 计（一个 URL 记 1，不论其下有几个 HTTP method）；全集 398 个 URL / 426 个操作。
-2. **归一化规则**：路径变量名归一（`{tid}`/`{eid}`/`{alarm_id}` → `{}`）后与 OAS 匹配，消除"同接口不同变量名"的误判。
-3. **人工修正**：`/api/monitor/alarms/{addr}`（查历史报警）与 `/api/monitor/alarms/{id}`（处理报警）**均已实现**，机器口径仅匹配其一，本文档按修正后口径统计。
-4. **已知歧义（不计入已实现，也不建议当独立缺口补测）**：
+1. **粒度**：按 URL 计（一个 URL 记 1，不论其下有几个 HTTP method）；OAS 全集 398 个 URL / 426 个操作，本计划当前纳入 346 个 URL。
+2. **范围排除**：`app-users` 25 个、`ao-wei` 8 个、`share` 7 个、`follow-platforms` 5 个、`subscription` 4 个、`order/payment/wx/applet` 1 个、`wx-service-notification` 2 个，共 52 个小程序接口不再纳入自动化补测计划。
+3. **归一化规则**：路径变量名归一（`{tid}`/`{eid}`/`{alarm_id}` → `{}`）后与 OAS 匹配，消除"同接口不同变量名"的误判。
+4. **人工修正**：`/api/monitor/alarms/{addr}`（查历史报警）与 `/api/monitor/alarms/{id}`（处理报警）**均已实现**，机器口径仅匹配其一，本文档沿用人工修正口径统计为 78；严格归一去重为 77。
+5. **已知歧义（不计入已实现，也不建议当独立缺口补测）**：
    - `/api/monitor/captcha`：在 `conftest.py` 登录链路中被调用，但无独立断言用例（属前置工具）。
    - `/api/datas/bd`、`/api/monitor/mock-in-storage` 等：作为协议造数工具被调用，非被测对象。
-5. **P2 中的 mock/h5-mock/datas/mock-\* 系列**：多为造数/模拟接口，本身不是业务被测对象，是否补测由测试目标决定。
+6. **P2 中的 mock/h5-mock/datas/mock-\* 系列**：多为造数/模拟接口，本身不是业务被测对象，是否补测由测试目标决定。
 
 ---
 
 ## 二、总览
 
-| 维度 | 数量 | 占比 |
-|------|------|------|
-| OAS 接口全集（URL） | 398 | 100% |
-| ✅ 已实现自动化 | **35** | **8.8%** |
-| ❌ 未实现自动化 | **363** | 91.2% |
-| └─ 🔴 P0 高风险写操作 | 143 | 36.0% |
-| └─ 🟡 P1 消息/通知/触达 | 64 | 16.1% |
-| └─ 🟢 P2 枚举/地图/造数/低ROI | 156 | 39.3% |
+| 维度 | 数量 | 占计划范围 |
+|------|------|------------|
+| OAS 接口全集（URL） | 398 | — |
+| 已排除小程序接口 | 52 | — |
+| 当前计划范围 | **346** | **100%** |
+| ✅ 已实现自动化 | **78** | **22.5%** |
+| ❌ 未实现自动化 | **268** | **77.5%** |
+| └─ 🔴 P0 高风险写操作 | 68 | 19.7% |
+| └─ 🟡 P1 消息/通知/触达 | 44 | 12.7% |
+| └─ 🟢 P2 枚举/地图/造数/低ROI | 156 | 45.1% |
+
+**进度变化**：已实现从 35 增至 78，新增 43 个接口；严格按路径变量归一去重为 77 个。新增覆盖集中在 emergency 17 个、order 4 个、star-bean 4 个、intercom 18 个。
 
 **判级依据**：
 - **P0** = 资金扣费 / 绑定关系变更 / 设备写指令 / 账号安全与越权 / 救命功能（应急求救）。出了事最赔不起。
@@ -37,7 +44,7 @@
 
 ---
 
-## 三、✅ 已实现自动化的接口（35 个，8 个模块）
+## 三、✅ 已实现自动化的接口（78 个，13 个模块）
 
 | 模块 | 数量 | 测试文件 | 覆盖接口 |
 |------|------|----------|----------|
@@ -49,76 +56,34 @@
 | field-templates 字段模板 | 3 | test_field_template_controller.py | `/field-templates`、`{id}`、`{id}/fields` |
 | alarm-settings 报警设置 | 2 | test_alarm_settings_controller.py | `/alarm-settings`、`{id}` |
 | web-user 登录 | 1 | test_login.py | `/web-user/login`（正向在 conftest，负向有用例） |
+| emergency/chat 求救群聊 | 12 | test_emergency_chat_controller.py | 除 `/item/complete/addr` 外，其余 12 个计划接口已覆盖 |
+| emergency/combo 求救套餐 | 5 | test_emergency_combo_controller.py | `/mall`、`/chat/item/info`、`/chat/item/remaining`、`/usage/page`、`/buy` |
+| order 订单 | 4 | test_emergency_order_controller.py | `/page`、`/detail`、`/cancel`、`/delete` |
+| star-bean 星豆 | 4 | test_star_bean_controller.py | `/calculate`、`/package/active`、`/buy`、`/transaction/page` |
+| intercom 对讲 | 18 | test_intercom_group_controller.py + test_intercom_message_controller.py | 除 `/group/closed/delivery/cancel` 外，其余 18 个计划接口已覆盖 |
 
-> 质量提醒：已实现模块断言多停留在 `code/msg` 层，副作用（落库/消息推送/扣费）未验证。覆盖 ≠ 覆盖到位。
+> 进度状态：emergency/combo、star-bean 已全量完成；emergency/chat 为 12/13；order 在当前计划范围内为 4/5；intercom 为 18/19。
+>
+> 质量提醒：覆盖统计代表已有独立自动化用例，不等同于所有副作用、扣费守恒、消息送达均已验证到位。
 
 ---
 
-## 四、🔴 P0 未实现清单（143 个，16 个模块）
+## 四、🔴 P0 进度与剩余清单（目标 93 个，已完成 25 个，剩余 68 个）
 
-> 🔴🔴 标记 = P0 中的最高危（扣钱 / 改归属 / 砖机 / 账号安全），建议第一波补测。
+> 原 P0 143 个；移除 `app-users` 25 个、`ao-wei`/`share`/`follow-platforms`/`subscription` 24 个、微信小程序支付 1 个后，计划目标为 93 个。
+> 🔴🔴 标记 = P0 中的最高危（扣钱 / 改归属 / 砖机 / 账号安全）。
 
-### 4.1 emergency 应急/求救（18 个）⭐ 主人点名模块
+### 4.1 emergency 应急/求救（17/18 已完成，剩余 1 个）
 
-**A. 求救群聊本体（emergency/chat/*）— 救命功能，触达失败=人命**
-
-| 接口 | 风险点 |
-|------|--------|
-| `/api/monitor/emergency/chat/send` | 求救消息发送：幂等（不重复广播）、送达回执、漏触达 |
-| `/api/monitor/emergency/chat/member/add` | 群成员添加：越权加人 |
-| `/api/monitor/emergency/chat/member/edit` | 群成员编辑：越权改人 |
-| `/api/monitor/emergency/chat/member/list` | 群成员查询 |
-| `/api/monitor/emergency/chat/item/page` | 消息分页 |
-| `/api/monitor/emergency/chat/item/all/read` | 全部已读：幂等 |
-| `/api/monitor/emergency/chat/item/clear/all-unread` | 清未读 |
-| `/api/monitor/emergency/chat/item/complete` | 结束求救会话：**状态机非法跃迁**（已结束又发消息？） |
-| `/api/monitor/emergency/chat/item/complete/addr` | 按设备结束会话 |
-| `/api/monitor/emergency/chat/item/complete/status` | 会话结束状态查询 |
-| `/api/monitor/emergency/chat/record/page` | 聊天记录分页 |
-| `/api/monitor/emergency/chat/record/read/list` | 已读列表 |
-| `/api/monitor/emergency/chat/record/errorMsg` | 错误消息记录 |
-
-**B. 求救套餐（emergency/combo/*）— 计费扣量，最高危**
+- ✅ emergency/chat 已完成 12/13：发送、成员管理、消息分页、已读、清未读、结束会话、状态查询、记录查询均已覆盖。
+- ✅ emergency/combo 已完成 5/5：套餐商城、条数信息、剩余量、用量分页、购买链路均已覆盖。
+- ⏳ 唯一剩余：
 
 | 接口 | 风险点 |
 |------|--------|
-| 🔴🔴 `/api/monitor/emergency/combo/buy` | 购买套餐=扣星豆/扣费：**只扣一次、幂等、余额不足拦截** |
-| `/api/monitor/emergency/combo/chat/item/info` | 套餐内消息条数信息 |
-| `/api/monitor/emergency/combo/chat/item/remaining` | 剩余条数（对账基准） |
-| `/api/monitor/emergency/combo/mall` | 套餐商城列表 |
-| `/api/monitor/emergency/combo/usage/page` | 用量分页 |
+| `/api/monitor/emergency/chat/item/complete/addr` | 按设备结束会话；验证状态机与重复结束幂等 |
 
-### 4.2 app-users 小程序用户（25 个）— 绑定关系变更最大户
-
-| 接口 | 风险点 |
-|------|--------|
-| 🔴🔴 `/api/monitor/app-users/bind/addr` | 绑定设备：**越权绑定他人设备** |
-| 🔴🔴 `/api/monitor/app-users/unbind/addr` | 解绑设备：归属变更、误解绑 |
-| 🔴🔴 `/api/monitor/app-users/login/wx-applet` | 微信登录：账号体系入口 |
-| 🔴🔴 `/api/monitor/app-users/login/wx-applet-password` | 微信密码登录 |
-| 🔴🔴 `/api/monitor/app-users/bind/emergency-contact` | 绑定紧急联系人：**谁能成为我的求救对象** |
-| 🔴🔴 `/api/monitor/app-users/bind/multiple-emergency-contact` | 批量绑定紧急联系人 |
-| 🔴🔴 `/api/monitor/app-users/save/emergency-contact` | 保存紧急联系人 |
-| 🔴🔴 `/api/monitor/app-users/delete/emergency-contact` | 删除紧急联系人 |
-| 🔴🔴 `/api/monitor/app-users/unbind/emergency-contact/{phone}` | 解绑紧急联系人 |
-| `/api/monitor/app-users/pre-bind/{sn}` | 预绑定校验 |
-| `/api/monitor/app-users/pre-follow-platform/{followPlatformAccount}/{addr}` | 预关注平台 |
-| `/api/monitor/app-users/location/report` | 位置上报 |
-| `/api/monitor/app-users/location/report/{cardNum}/` | 按卡号位置上报 |
-| `/api/monitor/app-users/voice-clone` | 声纹克隆：生物特征、隐私滥用 |
-| `/api/monitor/app-users/voice-clone/enabled` | 声纹开关 |
-| `/api/monitor/app-users/voice-clone/ref` | 声纹参考音频 |
-| `/api/monitor/app-users/voice-clone/ref/play` | 播放参考音频 |
-| `/api/monitor/app-users/applet-my-info` | 我的信息 |
-| `/api/monitor/app-users/avatar-nickname` | 头像昵称 |
-| `/api/monitor/app-users/emergency-contact` | 紧急联系人查询 |
-| `/api/monitor/app-users/emergency-contact/friends` | 联系人好友 |
-| `/api/monitor/app-users/friend/emergency-noti` | 好友紧急通知 |
-| `/api/monitor/app-users/group/intercom` | 群对讲 |
-| `/api/monitor/app-users/group/level` | 群等级 |
-| `/api/monitor/app-users/info` | 用户信息 |
-
-### 4.3 pn07 设备指令（21 个）— 设备写操作
+### 4.2 pn07 设备指令（21 个）— 设备写操作
 
 | 接口 | 风险点 |
 |------|--------|
@@ -144,7 +109,7 @@
 | `/api/monitor/pn07/active/info/{addr}` | 激活信息 |
 | `/api/monitor/pn07/active/upload` | 激活上传 |
 
-### 4.4 pn06 设备指令（12 个）
+### 4.3 pn06 设备指令（12 个）
 
 | 接口 | 风险点 |
 |------|--------|
@@ -161,27 +126,20 @@
 | `/api/monitor/pn06/codes/{id}` | 单条删/改 |
 | `/api/datas/pn06` | pn06 数据上报 |
 
-### 4.5 order 订单（6 个）— 纯资金流
+### 4.4 order 订单（4/5 已完成，剩余 1 个）— 纯资金流
+
+- ✅ 已完成：`/page`、`/detail`、`/cancel`、`/delete`。
+- ⏳ 剩余：
 
 | 接口 | 风险点 |
 |------|--------|
 | 🔴🔴 `/api/monitor/order/payment` | 发起支付：**重复支付、金额篡改** |
-| 🔴🔴 `/api/monitor/order/payment/wx/applet` | 微信小程序支付 |
-| 🔴🔴 `/api/monitor/order/cancel` | 取消订单：**退款幂等、重复取消** |
-| 🔴🔴 `/api/monitor/order/delete` | 删除订单 |
-| `/api/monitor/order/page` | 订单列表（对账查询） |
-| `/api/monitor/order/detail` | 订单详情 |
 
-### 4.6 star-bean 星豆虚拟资产（4 个）
+### 4.5 star-bean 星豆虚拟资产（4/4 已完成）
 
-| 接口 | 风险点 |
-|------|--------|
-| 🔴🔴 `/api/monitor/star-bean/buy` | 充值星豆：**扣费守恒** |
-| `/api/monitor/star-bean/calculate` | 价格计算（与 buy 金额对账） |
-| `/api/monitor/star-bean/transaction/page` | 流水（资产守恒对账唯一真源） |
-| `/api/monitor/star-bean/package/active` | 激活套餐 |
+✅ `/buy`、`/calculate`、`/transaction/page`、`/package/active` 已全部覆盖。后续重点从“补接口”转为扣费守恒、流水对账、重复购买幂等验证。
 
-### 4.7 ver-codes 验证码（7 个）— 账号安全
+### 4.6 ver-codes 验证码（7 个）— 账号安全
 
 | 接口 | 风险点 |
 |------|--------|
@@ -193,7 +151,7 @@
 | `/api/monitor/ver-codes/bind/phone` | 绑手机验证码 |
 | `/api/monitor/ver-codes/set/emergency-contact` | 设紧急联系人验证码 |
 
-### 4.8 web-users 平台用户（13 个）
+### 4.7 web-users 平台用户（13 个）
 
 | 接口 | 风险点 |
 |------|--------|
@@ -211,7 +169,7 @@
 | `/api/monitor/web-users/records` | 操作记录 |
 | `/api/monitor/web-users/pre-bind-validation` | 预绑定校验 |
 
-### 4.9 web-sub-users 子账号（6 个）
+### 4.8 web-sub-users 子账号（6 个）
 
 | 接口 | 风险点 |
 |------|--------|
@@ -222,51 +180,7 @@
 | `/api/monitor/web-sub-users/{account}/terminals` | 子账号终端 |
 | `/api/monitor/web-sub-users/{account}/v2/terminals` | 子账号终端v2 |
 
-### 4.10 ao-wei 奥纬绑定（8 个）
-
-| 接口 | 风险点 |
-|------|--------|
-| 🔴🔴 `/api/monitor/ao-wei/bind/{addr}` | 绑定：**跨账号越权** |
-| 🔴🔴 `/api/monitor/ao-wei/unbind/{addr}` | 解绑 |
-| `/api/monitor/ao-wei/cancel-req/{addr}` | 取消请求 |
-| `/api/monitor/ao-wei/modify/{addr}` | 修改 |
-| `/api/monitor/ao-wei/status/{addr}` | 状态 |
-| `/api/monitor/ao-wei/friends` | 好友 |
-| `/api/monitor/ao-wei/info` | 信息 |
-| `/api/monitor/ao-wei/my-list` | 我的列表 |
-
-### 4.11 share 共享（7 个）
-
-| 接口 | 风险点 |
-|------|--------|
-| 🔴🔴 `/api/monitor/share/users/{addr}/cancel` | 取消共享：**水平越权** |
-| 🔴🔴 `/api/monitor/share/users/{addr}/batch/cancel` | 批量取消 |
-| `/api/monitor/share/follow` | 关注 |
-| `/api/monitor/share/pre-follow` | 预关注 |
-| `/api/monitor/share/terminals` | 共享终端 |
-| `/api/monitor/share/terminals/follow-num` | 关注数 |
-| `/api/monitor/share/users/{addr}` | 共享用户 |
-
-### 4.12 follow-platforms 关注平台（5 个）
-
-| 接口 | 风险点 |
-|------|--------|
-| 🔴🔴 `/api/monitor/follow-platforms/{followPlatformAccount}/bind/{addr}` | 绑定终端 |
-| 🔴🔴 `/api/monitor/follow-platforms/{followPlatformAccount}/remove/{addr}` | 移除终端 |
-| `/api/monitor/follow-platforms` | 平台列表/新增 |
-| `/api/monitor/follow-platforms/{followPlatformAccount}` | 平台删/改 |
-| `/api/monitor/follow-platforms/terminals` | 平台终端 |
-
-### 4.13 subscription 订阅（4 个）
-
-| 接口 | 风险点 |
-|------|--------|
-| `/api/monitor/subscription/subscribe` | 订阅：状态机 |
-| `/api/monitor/subscription/cancel` | 取消订阅：**重复取消/幂等** |
-| `/api/monitor/subscription` | 订阅列表 |
-| `/api/monitor/subscription/friends` | 订阅好友 |
-
-### 4.14 mock-terminal 造数终端（4 个）
+### 4.9 mock-terminal 造数终端（4 个）
 
 | 接口 | 风险点 |
 |------|--------|
@@ -275,14 +189,14 @@
 | `/api/monitor/mock-terminal/init-loc` | 初始化位置 |
 | `/api/monitor/mock-terminal/{id}/addrs` | 追加地址 |
 
-### 4.15 offline-alarm-settings 离线报警设置（2 个）
+### 4.10 offline-alarm-settings 离线报警设置（2 个）
 
 | 接口 | 风险点 |
 |------|--------|
 | `/api/monitor/offline-alarm-settings` | 设置列表 |
 | `/api/monitor/offline-alarm-settings/{id}` | 编辑设置：可配项测改前/改后/边界 |
 
-### 4.16 msg-noti-records 通知记录（1 个）
+### 4.11 msg-noti-records 通知记录（1 个）
 
 | 接口 | 风险点 |
 |------|--------|
@@ -290,31 +204,12 @@
 
 ---
 
-## 五、🟡 P1 未实现清单（64 个，10 个模块）
+## 五、🟡 P1 进度与剩余清单（目标 62 个，已完成 18 个，剩余 44 个）
 
-### 5.1 intercom 对讲（19 个）
+### 5.1 intercom 对讲（18/19 已完成，剩余 1 个）
 
-```
-/api/monitor/intercom/group/create            群创建
-/api/monitor/intercom/group/update            群更新
-/api/monitor/intercom/group/delete            群删除（状态机）
-/api/monitor/intercom/group/close             群关闭
-/api/monitor/intercom/group/invitation        群邀请
-/api/monitor/intercom/group/addr/remove       移除群设备
-/api/monitor/intercom/group/cost              群费用（涉计费，留意）
-/api/monitor/intercom/group/remainder         群剩余
-/api/monitor/intercom/group/terminal/list     群终端列表
-/api/monitor/intercom/group/closed/delivery/cancel   关闭投递取消
-/api/monitor/intercom/member/update/nickname  成员昵称
-/api/monitor/intercom/message/page            消息分页
-/api/monitor/intercom/message/receive/info    接收信息
-/api/monitor/intercom/message/clear/unread    清单未读（幂等）
-/api/monitor/intercom/message/clear/all-unread 清全部未读（幂等）
-/api/monitor/intercom/message/invitation/handler      邀请处理
-/api/monitor/intercom/message/invitation/notice/list  邀请通知
-/api/monitor/intercom/message/invitation/pending/count 待处理数
-/api/monitor/intercom/message/send/invitation/list    发出的邀请
-```
+- ✅ 群创建、更新、删除、关闭、邀请、移除设备、费用、余量、终端列表、成员昵称，以及邀请消息和普通消息接口均已覆盖。
+- ⏳ 唯一剩余：`/api/monitor/intercom/group/closed/delivery/cancel`（关闭投递取消）。
 
 ### 5.2 platform-chats 平台聊天（15 个）
 
@@ -388,13 +283,7 @@
 /api/monitor/unread  /api/monitor/unread/chat
 ```
 
-### 5.9 wx-service-notification 微信服务通知（2 个）
-
-```
-/api/monitor/wx-service-notification/subscribe  /api/monitor/wx-service-notification/subscribe/num
-```
-
-### 5.10 phrases 常用语（1 个）
+### 5.9 phrases 常用语（1 个）
 
 ```
 /api/monitor/phrases/list
@@ -424,13 +313,15 @@
 
 ---
 
-## 七、补测建议（分层推进）
+## 七、后续补测建议（按当前进度）
 
-1. **第一波（🔴🔴 约 30 个）**：emergency/combo/buy + order 全套 + star-bean/buy —— **资金链路串测**（套餐购买→星豆扣减→订单生成→取消退款，验守恒与幂等）；加上 ver-codes 爆破/轰炸、web-sub-users 越权。
-2. **第二波**：app-users 绑定/解绑/紧急联系人（越权矩阵）+ pn07/pn06 高危指令（upgrade/restart/shutdown 的幂等与回执）。
-3. **快胜**：msg-notification 11 个开关 1 个参数化模板；enums 19 个 1 个参数化模板 —— 两个模板直接拿回 30 个接口覆盖。
-4. **emergency/chat 群聊**：send 幂等 + 成员越权 + complete 状态机非法跃迁，三个用例锚住核心风险。
-5. **每条用例要求**：自带数据构造与清理；写操作验证"只发生一次副作用"；断言分层到副作用（落库/消息/扣费）。
+1. **先收尾现有模块**：补 `/emergency/chat/item/complete/addr`、`/order/payment`、`/intercom/group/closed/delivery/cancel`，关闭 3 个已接近完成模块的缺口。
+2. **账号安全**：优先 ver-codes 爆破/短信轰炸、web-sub-users 越权、web-users 改密/重置/实名认证。
+3. **设备高危指令**：pn07/pn06 的 upgrade/restart/shutdown、批量指令、回执查询；验证幂等、部分失败、真实回执。
+4. **快胜**：msg-notification 开关参数化 + enums 参数化，低成本提升覆盖。
+5. **已完成模块深化**：emergency/combo、star-bean、order 已有接口覆盖，下一步补扣费守恒、流水对账、重复请求幂等和副作用验证。
+6. **范围约束**：不再补测本计划已排除的小程序接口；后续发现归属不明接口时先确认业务端再纳入。
+7. **每条用例要求**：自带数据构造与清理；写操作验证“只发生一次副作用”；断言分层到落库、消息、扣费或设备回执。
 
 ---
 

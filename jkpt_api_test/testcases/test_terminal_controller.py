@@ -13,13 +13,12 @@
 #           list_terminals_cases→TestTm06 / (枚举走 fixture)→TestTm07
 import jsonpath
 import pytest
-import time
-from common.requests_util import BaseRequest, NonJsonResponseError, parse_response_json
-from common.yaml_util import read_yaml, write_yaml, resolve_extract_value, read_expected_msg
-from common.logger_util import sep, key, print_request, print_response
+
+from common.case_report_util import assert_response
 from common.cleanup import register_glht_inventory
-from common.allure_assert_util import assert_api_result
-from common.common_data import get_current_datetime
+from common.logger_util import print_request, print_response, sep
+from common.requests_util import BaseRequest
+from common.yaml_util import read_yaml, resolve_extract_value, write_yaml
 
 _jsonpath_parse = jsonpath.jsonpath
 http = BaseRequest()
@@ -37,42 +36,15 @@ class _TerminalHelpers:
 
     def _assert_and_report_res(self, res, case_name):
         """接受 Response 对象的断言（枚举用例无 YAML expected）"""
-        try:
-            json_data = parse_response_json(res, context=case_name)
-        except NonJsonResponseError as e:
-            pytest.fail(str(e))
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0]
-        sep(" 断言结果 ")
-        key("实际 code", code)
-        key("实际 msg", msg)
-        assert_api_result(
-            case_name=case_name,
-            expected_code=0,
-            expected_msg="成功",
-            actual_code=code,
-            actual_msg=msg,
-        )
+        enum_case = {
+            "name": case_name,
+            "expected": {"code": 0, "msg": "成功"},
+        }
+        return assert_response(enum_case, res)
 
     def _assert_and_report(self, case, res):
         """统一断言并输出报告"""
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0]
-
-        sep(" 断言结果 ")
-        key("预期 code", case["expected"]["code"])
-        key("实际 code", code)
-        key("预期 msg", read_expected_msg(case["expected"]))
-        key("实际 msg", msg)
-
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=read_expected_msg(case["expected"]),
-            actual_code=code,
-            actual_msg=msg
-        )
+        return assert_response(case, res)
 
 
 class TestTm01AddTerminal(_TerminalHelpers):
@@ -112,15 +84,13 @@ class TestTm01AddTerminal(_TerminalHelpers):
         print_response(res)
 
         # 成功时提取 addr 供后续编辑用例使用
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
+        json_data = self._assert_and_report(case, res)
+        code = json_data["code"]
         if code == 0 and not TestTm01AddTerminal._first_addr_extracted:
             terminal_addr = _jsonpath_parse(json_data, "$.data.addr")
             if terminal_addr:
                 write_yaml("./extract.yaml", {"devices_addr": terminal_addr[0]}, mode="append")
                 TestTm01AddTerminal._first_addr_extracted = True
-
-        self._assert_and_report(case, res)
 
 
 class TestTm02UpdateTerminal(_TerminalHelpers):
@@ -199,16 +169,14 @@ class TestTm03BatchAddTerminals(_TerminalHelpers):
         )
         print_response(res)
 
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
+        json_data = self._assert_and_report(case, res)
+        code = json_data["code"]
         if code == 0:
             added_terminals = _jsonpath_parse(json_data, "$.data.addedTerminals")
             if added_terminals and len(added_terminals) > 0:
                 addrs = [t.get("addr") for t in added_terminals if isinstance(t, dict)]
                 if addrs:
                     write_yaml("./extract.yaml", {"addrList": ",".join(addrs)}, mode="append")
-
-        self._assert_and_report(case, res)
 
 
 class TestTm04FollowTerminal(_TerminalHelpers):
@@ -320,18 +288,23 @@ class TestTm07AddTerminalByEnum(_TerminalHelpers):
                 log_level="none",
             )
             print_response(r_storage)
+            storage_case_name = f"入库 {case['terminalType']} SN={case['sn']}"
+            storage_case = {
+                "name": storage_case_name,
+                "expected": {"code": 0},
+            }
             try:
-                storage_json = parse_response_json(
-                    r_storage, context=f"入库 {case['terminalType']} SN={case['sn']}"
+                assert_response(
+                    storage_case,
+                    r_storage,
+                    biz_context={
+                        "terminalType": case["terminalType"],
+                        "SN": case["sn"],
+                    },
                 )
-            except NonJsonResponseError as e:
-                pytest.fail(str(e))
-            storage_code = _jsonpath_parse(storage_json, "$.code")[0]
-            if storage_code != 0:
-                storage_msg = _jsonpath_parse(storage_json, "$.msg")[0]
+            except AssertionError as error:
                 pytest.fail(
-                    f"入库失败 [{case['terminalType']} SN={case['sn']}]: "
-                    f"code={storage_code}, msg={storage_msg}"
+                    f"入库失败 [{case['terminalType']} SN={case['sn']}]: {error}"
                 )
             register_glht_inventory(case["sn"])
 

@@ -8,7 +8,13 @@ conftest.py — API自动化测试项目标准模板
 from common.ipconfig import get_local_ips
 import jsonpath
 from common.yaml_util import clear_yaml
-from common.requests_util import BaseRequest, get_last_http_context
+from common.requests_util import (
+    BaseRequest,
+    get_last_http_context,
+    get_response_json,
+    parse_response_json,
+)
+from common.case_report_util import assert_response
 import json, requests, pytest
 
 try:
@@ -69,10 +75,17 @@ def auth_token(base_url):
         "account": "admin",                 # ← 你的账号
         "password": "your_password_here",   # ← 你的密码(建议放环境变量)
     }
-    res = BaseRequest().send_request(method="post", url=url, params=payload)
-    token = _jsonpath_parse(res.json(), "$.data.token")[0]
+    res = BaseRequest().send_request(method="post", url=url, params=payload,
+                                     case_name="获取Token", log_level="none")
+    json_data = assert_response(
+        {"name": "获取Token", "expected": {"code": 0}},
+        res,
+        biz_context={"请求参数": {"account": payload.get("account")}},
+    )
+    token_values = _jsonpath_parse(json_data, "$.data.token") or []
+    token = token_values[0] if token_values else None
     if not token:
-        pytest.fail("登录失败，无法获取token")
+        pytest.fail("登录成功但响应缺少 data.token")
     return token
 
 # --- 可选（SKILL 2.7）：验证码登录 + 重试 — 需要 common.captcha_util 时取消注释并改用下方 fixture 替代上面的 auth_token ---
@@ -96,9 +109,14 @@ def auth_token(base_url):
 #         login_url = f"{base_url}/api/xxx/login"
 #         login_data = {"account": "admin", "password": "xxx", "captcha": captcha_text, "captchaId": captcha_id}
 #         login_resp = BaseRequest().send_request(method="post", url=login_url, params=login_data, case_name="登录", log_level="none")
-#         json_data = login_resp.json()
-#         if _jsonpath_parse(json_data, "$.code")[0] == 0:
-#             return _jsonpath_parse(json_data, "$.data.token")[0]
+#         json_data = assert_response(
+#             {"name": "登录", "expected": {"code": 0}},
+#             login_resp,
+#             biz_context={"请求参数": {"account": login_data.get("account")}},
+#         )
+#         token_values = _jsonpath_parse(json_data, "$.data.token") or []
+#         if token_values and token_values[0]:
+#             return token_values[0]
 #         if attempt < max_attempts:
 #             time.sleep(1)
 #     pytest.fail("登录失败，已重试仍未成功")
@@ -121,7 +139,8 @@ def auth_headers(auth_token):
 #     res = BaseRequest().send_request(method="post", url=url,
 #                                       params={"groupName": "测试分组"},
 #                                       headers=auth_headers)
-#     return _jsonpath_parse(res.json(), "$.data.id")[0]
+#     data = parse_response_json(res, context="创建测试分组")
+#     return _jsonpath_parse(data, "$.data.id")[0]
 
 # ==================== 第六部分：自动钩子（直接复制，不用改）====================
 @pytest.fixture(scope="session", autouse=True)
@@ -158,7 +177,7 @@ def log_all_requests_and_responses():
 
         # --- 响应记录 ---
         try:
-            resp_body = response.json()
+            resp_body = get_response_json(response)
             body_type, body_data = "json", sanitize_data(resp_body)
         except (ValueError, Exception):
             resp_body = response.text[:10000]

@@ -31,7 +31,8 @@ def close_rescue_chats(base_url, auth_headers, sns) -> tuple:
                 case_name=f"收尾查群-{sn}",
                 log_level="none",
             )
-            items = _jp()(r.json(), "$.data.items[*]") or []
+            page_data = parse_response_json(r, context=f"收尾查群-{sn}")
+            items = _jp()(page_data, "$.data.items[*]") or []
         except Exception as e:
             key(f"⚠️ 收尾查群失败 {sn}", str(e)[:120])
             continue
@@ -52,7 +53,8 @@ def close_rescue_chats(base_url, auth_headers, sns) -> tuple:
                 case_name=f"收尾批量完成-{sn}",
                 log_level="none",
             )
-            addr_ok = _jp()(r.json(), "$.code")[0] == 0
+            response_data = parse_response_json(r, context=f"收尾批量完成-{sn}")
+            addr_ok = response_data["code"] == 0
         except Exception:
             addr_ok = False
 
@@ -71,7 +73,8 @@ def close_rescue_chats(base_url, auth_headers, sns) -> tuple:
                     case_name=f"收尾关闭群-{it.get('id')}",
                     log_level="none",
                 )
-                closed += _jp()(r.json(), "$.code")[0] == 0
+                response_data = parse_response_json(r, context=f"收尾关闭群-{it.get('id')}")
+                closed += response_data["code"] == 0
             except Exception as e:
                 key(f"⚠️ 收尾关闭失败 {it.get('id')}", str(e)[:120])
                 still_active += 1
@@ -88,7 +91,8 @@ def close_rescue_chats(base_url, auth_headers, sns) -> tuple:
                     case_name=f"收尾复核-{sn}",
                     log_level="none",
                 )
-                remain = [x for x in (_jp()(r.json(), "$.data.items[*]") or [])
+                review_data = parse_response_json(r, context=f"收尾复核-{sn}")
+                remain = [x for x in (_jp()(review_data, "$.data.items[*]") or [])
                           if x.get("status") == 1]
                 still_active += len(remain)
                 closed -= max(0, len(remain))  # 扣回测试桩关而未闭的

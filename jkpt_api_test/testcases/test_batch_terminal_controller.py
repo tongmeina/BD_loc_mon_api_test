@@ -14,11 +14,11 @@ import io
 import jsonpath
 import os
 import pytest
-from common.requests_util import BaseRequest
-from common.yaml_util import read_yaml, write_yaml, resolve_extract_value, read_expected_msg
-from common.logger_util import sep, key, print_request, print_response
-from common.allure_assert_util import assert_api_result
+from common.case_report_util import assert_response
 from common.export_assert_util import assert_export_response
+from common.logger_util import sep, key, print_request, print_response
+from common.requests_util import BaseRequest
+from common.yaml_util import read_yaml, write_yaml, resolve_extract_value
 
 _jsonpath_parse = jsonpath.jsonpath
 http = BaseRequest()
@@ -33,22 +33,9 @@ class _BatchTerminalHelpers:
     """不被 pytest 收集；供 8 个接口类复用断言。"""
 
     def _assert_and_report(self, case, res):
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0]
-
-        sep(" 断言结果 ")
-        key("预期 code", case["expected"]["code"])
-        key("实际 code", code)
-        key("预期 msg", read_expected_msg(case["expected"]))
-        key("实际 msg", msg)
-
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=read_expected_msg(case["expected"]),
-            actual_code=code,
-            actual_msg=msg,
+        return assert_response(
+            case,
+            res,
             biz_context={"请求用例": case["name"]},
         )
 
@@ -123,8 +110,8 @@ class TestBt01BatchImport(_BatchTerminalHelpers):
             pytest.fail(f"未知场景类型: {scenario}")
 
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
+        json_data = self._assert_and_report(case, res)
+        code = json_data["code"]
 
         if scenario == "positive" and code == 0 and not TestBt01BatchImport._first_batch_addrs_written:
             addrs = _jsonpath_parse(json_data, "$.data.addedTerminals[*].addr") or []
@@ -132,8 +119,6 @@ class TestBt01BatchImport(_BatchTerminalHelpers):
             if addrs:
                 write_yaml("./extract.yaml", {"batch_addrs": ",".join(addrs)}, mode="append")
                 TestBt01BatchImport._first_batch_addrs_written = True
-
-        self._assert_and_report(case, res)
 
 
 class TestBt02BatchDetails(_BatchTerminalHelpers):

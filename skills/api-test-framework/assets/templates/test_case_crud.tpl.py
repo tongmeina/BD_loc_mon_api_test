@@ -13,9 +13,9 @@ parametrize 不要 ids=；不要 @allure.title(case["name"])。
 import jsonpath
 import pytest
 import time
+from common.case_report_util import assert_response
 from common.requests_util import BaseRequest
-from common.yaml_util import read_yaml, write_yaml, resolve_extract_value, read_expected_msg
-from common.allure_assert_util import assert_api_result
+from common.yaml_util import read_yaml, write_yaml, resolve_extract_value
 
 _jsonpath_parse = jsonpath.jsonpath
 http = BaseRequest()
@@ -60,24 +60,18 @@ class Test01CreateXxx(_XxxHelpers):
             headers=self._headers(auth_headers, case),
             case_name=case["name"], log_level="simple",
         )
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0]
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": payload},
+        )
+        code = json_data["code"]
 
         if code == 0 and not _first_id_extracted:
             created_id = _jsonpath_parse(json_data, "$.data.id")
             if created_id:
                 write_yaml("./extract.yaml", {"created_id": created_id[0]}, mode="append")
                 _first_id_extracted = True
-
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=read_expected_msg(case["expected"]),
-            actual_code=code,
-            actual_msg=msg,
-            biz_context={"请求参数": payload},
-        )
 
 
 class Test02UpdateXxx(_XxxHelpers):
@@ -102,15 +96,9 @@ class Test02UpdateXxx(_XxxHelpers):
             headers=self._headers(auth_headers, case),
             case_name=case["name"], log_level="simple",
         )
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0]
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=read_expected_msg(case["expected"]),
-            actual_code=code,
-            actual_msg=msg,
+        assert_response(
+            case,
+            res,
             biz_context={"请求参数": payload},
         )
 
@@ -135,14 +123,8 @@ class Test03DeleteXxx(_XxxHelpers):
             headers=self._headers(auth_headers, case),
             case_name=case["name"], log_level="simple",
         )
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0]
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=read_expected_msg(case["expected"]),
-            actual_code=code,
-            actual_msg=msg,
+        assert_response(
+            case,
+            res,
             biz_context={"请求参数": {"id": resource_id}},
         )

@@ -17,7 +17,8 @@ description: >
 **通用层**（跨项目可复用，本 SKILL 主体描述）：
 
 - HTTP 客户端：`from common.requests_util import BaseRequest`
-- 断言：`from common.allure_assert_util import assert_api_result`
+- 普通 REST 信封断言：`from common.case_report_util import assert_response`
+- 底层 code/msg 比较：`common.allure_assert_util.assert_api_result`（普通 testcase 不直接调用）
 - 日志：`from common.logger_util import sep, key, print_request, print_response`
 - 数据：`from common.yaml_util import read_yaml, write_yaml, clear_yaml, resolve_extract_value, read_expected_msg`
 - 用例模式：模式 A（无状态）/ 模式 B′（文件内多类 + extract）；模式 B 单类切片勿用于 Suites
@@ -102,7 +103,7 @@ response = http.send_request(
 
 #### 敏感信息脱敏（自动处理）
 
-以下关键字段自动隐藏：`authorization`, `cookie`, `token`, `password`, `secret`, `key`
+请求、响应、日志和 Allure 上下文递归隐藏凭据、密码、验证码字段，并按值脱敏手机号和邮箱。
 
 #### 典型调用模式
 
@@ -212,30 +213,44 @@ ts = get_current_datetime()
 # 返回: "20260427133000"  用于生成唯一测试数据名称
 ```
 
-### 2.5 Allure断言封装（推荐）
+### 2.5 统一响应信封入口（普通 REST 必须）
 
-**文件**: `common/allure_assert_util.py`  
-**导入**: `from common.allure_assert_util import assert_api_result`
+**文件**: `common/case_report_util.py`
+**导入**: `from common.case_report_util import assert_response`
 
 ```python
-assert_api_result(
-    case_name=case["name"],
-    expected_code=case["expected"]["code"],
-    expected_msg=read_expected_msg(case["expected"]),
-    actual_code=code,
-    actual_msg=msg,
-    biz_context={"请求参数": payload}
+json_data = assert_response(
+    case,
+    response,
+    biz_context={"请求参数": payload},
 )
 ```
 
 **用途**:
-- 统一成功/失败分支断言，避免每个用例重复写 if/else
-- 成功时自动附加 Allure 文本附件
-- 失败时自动附加结构化 JSON 上下文附件（含业务上下文）
+- 安全解析并缓存 JSON object，非 JSON、空体、缺 `code` 形成清晰失败
+- 统一读取 YAML `expected.code` 与 `msg/error_msg`
+- 仅在 `expected.http_status` 明确配置时校验 HTTP 状态
+- 返回 `json_data`，供领域字段、分页、状态和副作用断言继续使用
+- 请求、响应和失败上下文统一递归脱敏
+
+**兼容入口**:
+- `assert_case(case, json_data, biz_context)`：保留 intercom dict 入参和 `(code, msg)` 返回
+- `send_case(...)`：保留 intercom 请求签名和 dict 返回
+- `report_extra_and_assert(...)`：保留领域 rows 断言
+
+`common.allure_assert_util.assert_api_result` 是底层比较器，普通 testcase 不直接调用。
 
 **biz_context 建议字段**:
-- `请求参数`: 用例关键请求字段（建议脱敏）
-- `关键中间变量`: 如动态 ID、验证码、提取值
+- `请求参数`: 用例关键请求字段
+- `关键中间变量`: 动态 ID 等非敏感变量；验证码不得写入上下文
+
+**静态门禁**:
+
+```powershell
+.\\.venv\\Scripts\\python.exe -m tools.assertion_lint .\\testcases
+```
+
+普通 testcase 扫描必须为 0 violations；协议、导出、fixture 和 cleanup 的专用解析不由该门禁机械替换。
 
 ---
 
@@ -288,7 +303,7 @@ captcha_text = ocr.recognize_from_response(resp)
 **何时用协议层**：
 
 - 用例需要向后端发**二进制协议**，验证服务侧解码 / 持久化 / 联动业务
-- HTTP 用例只关心 `assert_api_result`；协议用例只关心 `ProtocolSendResult.success`
+- 普通 HTTP 用例使用 `assert_response`；协议用例只关心 `ProtocolSendResult.success`
 
 **用例最小骨架**（详细方法签名见 [methods-reference.md §16-19](references/methods-reference.md)；fixture 见 [conftest-jkpt.md](references/conftest-jkpt.md)）：
 
@@ -375,7 +390,7 @@ allure-pytest 的 Suites 按 pytest 收集产物分层，**最后一层文件夹
 - 多接口文件必须拆类。单接口文件（登录、一个协议探测）一类即可，不必为拆而拆。
 - class 名带 **可排序前缀**（补零数字，如 `Test01` / `Test02`）。前缀字母表由项目适配层定义，**不要**把某项目的 `TestEc` 抄到新项目。
 - 共享逻辑放在不以 `Test` 开头的 Helpers（`python_classes = Test*` 时不会被收集）。
-- YAML `name` 给人读：日志、`send_request(case_name=…)` 附件、`assert_api_result`。**不是** Suites 树标题。
+- YAML `name` 给人读：日志、`send_request(case_name=…)` 附件、`assert_response` 失败上下文。**不是** Suites 树标题。
 - 叶子 id：不要用中文场景名当 `ids=` 或 `@allure.title`（Unicode 转义后按字符串排序会乱序）。默认 **不传 `ids=`**；不传并不保证所有 pytest 版本都显示 `[case0]`，换项目或升级后应核一次 nodeid。超过 9 条时注意 `case10` 会排到 `case2` 前。
 - 场景名插到 YAML 列表 **开头** 会平移下标，Allure 历史会错位；接受，或改用 ASCII slug（适配层定）。
 - extract 作用域是 **文件**。写 extract 的那一类用类级/模块级「只写一次」标志；**不要**用单类上的 `created_id` 跨类共享。
@@ -394,34 +409,32 @@ allure-pytest 的 Suites 按 pytest 收集产物分层，**最后一层文件夹
 
 **Python模板**（单接口；多接口用 crud 模板的多类骨架，每类绑定自己的 `*_cases`）:
 ```python
-import jsonpath
 import pytest
+from common.case_report_util import assert_response
 from common.requests_util import BaseRequest
-from common.yaml_util import read_yaml, read_expected_msg
-from common.allure_assert_util import assert_api_result
+from common.yaml_util import read_yaml
 
-_jsonpath_parse = jsonpath.jsonpath
 _TEST_DATA = read_yaml("./yaml/test_xxx.yaml")
 
 class Test01Xxx:
     @pytest.mark.parametrize("case", _TEST_DATA["xxx_cases"])  # 不要 ids=
-    def test_xxx(self, base_url, case):
+    def test_xxx(self, base_url, auth_headers, case):
         url = f"{base_url}/your/api/path"
         payload = { /* 从 case 构建，不要改 case 字典 */ }
-        res = BaseRequest().send_request(
-            method="post", url=url, params=payload,
-            case_name=case["name"], log_level="simple"
-        )
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0]
-        assert_api_result(
+        response = BaseRequest().send_request(
+            method="post",
+            url=url,
+            params=payload,
+            headers=auth_headers,
             case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=read_expected_msg(case["expected"]),
-            actual_code=code,
-            actual_msg=msg,
+            log_level="simple",
         )
+        json_data = assert_response(
+            case,
+            response,
+            biz_context={"请求参数": payload},
+        )
+        # 领域字段按需继续断言 json_data；不要重复解析 $.code/$.msg。
 ```
 
 ### 模式B：单类 + 类变量 + 切片 — 勿用于 Suites 主视图
@@ -510,22 +523,24 @@ def test_xxx(self, base_url, auth_headers, group_fixture, case):
 
 ### 断言标准模式
 
-```python
-# 推荐：先提取核心断言字段
-json_data = res.json()
-code = _jsonpath_parse(json_data, "$.code")[0]
-msg = _jsonpath_parse(json_data, "$.msg")[0]
+普通 REST 用例必须先通过统一响应入口完成响应解析和 `code/msg` 信封断言，再做领域字段断言：
 
-# 推荐：调用公共断言工具，避免重复写失败上下文与Allure附件
-assert_api_result(
-    case_name=case["name"],
-    expected_code=case["expected"]["code"],
-    expected_msg=read_expected_msg(case["expected"]),
-    actual_code=code,
-    actual_msg=msg,
-    biz_context={"请求参数": payload}
+```python
+from common.case_report_util import assert_response
+
+json_data = assert_response(
+    case,
+    res,
+    biz_context={"请求参数": payload},
 )
+
+# 仅按领域需要继续断言 data；不要重复解析 $.code/$.msg
+items = json_data.get("data") or []
+assert isinstance(items, list)
 ```
+
+`common.allure_assert_util.assert_api_result` 只作为底层比较器，由
+`common.case_report_util.assert_response` 调用；普通 testcase 不得直接导入或调用。
 
 ### JSONPath 提取常用写法
 
@@ -536,20 +551,12 @@ import jsonpath
 
 _jsonpath_parse = jsonpath.jsonpath   # ← 文件顶部声明一次，下面直接用
 
-json_data = res.json()   # ← 只调用一次 .json()，避免重复解析
+# json_data 已由 assert_response 或 parse_response_json 得到；不要再次 res.json()
 
-# 提取单个值（结果是列表，取 [0]）
-token   = _jsonpath_parse(json_data, "$.data.token")[0]
-user_id = _jsonpath_parse(json_data, "$.data.userList[0].id")[0]
-
-# 提取列表（无匹配时返回 False，需判断）
-addr_list = _jsonpath_parse(json_data, "$.data.items[*].addr")
-if addr_list:                        # False 或空列表都视为"无结果"
-    addrs = addr_list                # 已经是列表，直接用
-
-# 安全取单值（防止路径不存在时报 IndexError）
-raw = _jsonpath_parse(json_data, "$.msg")
-msg = raw[0] if raw else "未知错误"
+# 领域字段提取（不重复读取 code/msg）
+token = _jsonpath_parse(json_data, "$.data.token")
+user_id = _jsonpath_parse(json_data, "$.data.userList[0].id")
+addr_list = _jsonpath_parse(json_data, "$.data.items[*].addr") or []
 ```
 
 ---
@@ -663,7 +670,7 @@ delete_xxx_cases:
 - [ ] 多接口文件是否一类一报告分组单元、类名是否带补零前缀；Helpers 是否不以 `Test` 开头
 - [ ] 有 extract 时清理是否在 module/session，而不是只挂在最后一个 Test 类
 - [ ] fixture 注入是否完整（`base_url`、`auth_headers`、业务 fixture）
-- [ ] 断言是否优先使用 `assert_api_result(...)` 并传 `biz_context`
+- [ ] 普通 REST 断言是否使用 `assert_response(...)` 并传 `biz_context`；领域断言只消费返回的 `json_data`
 - [ ] 关键字匹配逻辑是否覆盖了所有 case name
 - [ ] 有动态数据的场景是否用了 `get_current_datetime()`
 - [ ] `case_name` 和 `log_level` 参数是否传入 `send_request`

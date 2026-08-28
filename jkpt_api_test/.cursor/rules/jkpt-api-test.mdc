@@ -18,7 +18,8 @@ globs: testcases/**, yaml/**, common/**, conftest.py, skills/api-test-framework/
 ## 必须
 
 - HTTP 请求入口：`from common.requests_util import BaseRequest`
-- 统一断言：`from common.allure_assert_util import assert_api_result`
+- 普通 REST 统一信封断言：`from common.case_report_util import assert_response`
+- `assert_api_result` 仅作公共层底层比较器，普通 testcase 禁止直接调用
 - YAML 读取：`from common.yaml_util import read_yaml, write_yaml, clear_yaml, read_expected_msg`
 - 正向 YAML：`expected.msg`；负向 YAML：`expected.error_msg`（禁止正向写 `error_msg: "成功"`）
 - 日志：`from common.logger_util import sep, key, print_request, print_response`
@@ -56,8 +57,8 @@ globs: testcases/**, yaml/**, common/**, conftest.py, skills/api-test-framework/
 1. 接口无依赖 → 模式 A（多接口仍一类一接口）
 2. 接口有 CRUD 链路 → 模式 B′（文件内多类 + extract.yaml）；不要模式 B 类变量
 3. 二进制协议 → 协议层 + `bd_client.send_*`
-4. 任何场景断言 → `assert_api_result(...)` 优先
-5. 失败上下文 → 已由 `pytest_runtest_makereport` 自动附 Allure，不重复实现
+4. 普通 JSON REST → `assert_response(...)`；协议/导出保留专用断言
+5. 失败上下文 → `BaseRequest` 已附请求/响应，Hook 仅兜底，不重复附加
 6. YAML `name` → 日志/附件；Suites 叶子用默认参数下标
 
 ## 生成后自检
@@ -68,6 +69,7 @@ globs: testcases/**, yaml/**, common/**, conftest.py, skills/api-test-framework/
 - 正向 `expected.msg`、负向 `expected.error_msg`
 - `no_auth` 路径与正向路径在同一方法内分支
 - 协议用例不出现 `auth_headers`
+- 普通 REST 没有直接 import/call `assert_api_result`，没有自行重复解析 `$.code/$.msg`
 - 没有 `run_case` / `pytest_plugin` / `version: "1.0"`
 
 ## 公共能力提取规则

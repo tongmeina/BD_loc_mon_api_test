@@ -10,10 +10,10 @@ import time
 import jsonpath
 import pytest
 
-from common.allure_assert_util import assert_api_result
+from common.case_report_util import assert_response
 from common.logger_util import key, print_request, print_response, sep
-from common.requests_util import BaseRequest
-from common.yaml_util import read_yaml, resolve_extract_value, read_expected_msg, write_yaml
+from common.requests_util import BaseRequest, parse_response_json
+from common.yaml_util import read_yaml, resolve_extract_value, write_yaml
 
 _jsonpath_parse = jsonpath.jsonpath
 http = BaseRequest()
@@ -30,7 +30,8 @@ class _EmergencyChatHelpers:
                   "chatItemId": chat_item_id}
         res = http.send_request("get", url, params=params, headers=auth_headers,
                                 case_name="查完成状态", log_level="none")
-        matched = _jsonpath_parse(res.json(), "$.data.isCompleted")
+        data = parse_response_json(res, context="查完成状态")
+        matched = _jsonpath_parse(data, "$.data.isCompleted")
         return matched[0] if matched else None
 
     def _create_active_chat(self, base_url, auth_headers, rescue_client, sn):
@@ -58,7 +59,8 @@ class _EmergencyChatHelpers:
                   "chatItemId": chat_item_id, "page": 1, "pageSize": 50}
         res = http.send_request("get", url, params=params, headers=auth_headers,
                                 case_name="查聊天记录", log_level="none")
-        return _jsonpath_parse(res.json(), "$.data.items[*]") or []
+        data = parse_response_json(res, context="查聊天记录")
+        return _jsonpath_parse(data, "$.data.items[*]") or []
 
     def _get_item_page(self, base_url, auth_headers, sn):
         """查询群聊列表（辅助方法）"""
@@ -67,7 +69,8 @@ class _EmergencyChatHelpers:
                   "itemName": sn, "page": 1, "pageSize": 10}
         res = http.send_request("get", url, params=params, headers=auth_headers,
                                 case_name="查群聊列表", log_level="none")
-        return _jsonpath_parse(res.json(), "$.data.items[*]") or []
+        data = parse_response_json(res, context="查群聊列表")
+        return _jsonpath_parse(data, "$.data.items[*]") or []
 
     def _get_member_list(self, base_url, auth_headers, chat_item_id):
         """查询群成员列表（辅助方法）"""
@@ -75,22 +78,8 @@ class _EmergencyChatHelpers:
         params = {"Authorization": auth_headers.get("Authorization") or "", "chatItemId": chat_item_id}
         res = http.send_request("get", url, params=params, headers=auth_headers,
                                 case_name="查成员列表", log_level="none")
-        return _jsonpath_parse(res.json(), "$.data[*]") or []
-
-    def _assert_and_report(self, case, code, msg, biz_context):
-        sep(" 断言结果 ")
-        key("预期 code", case["expected"]["code"])
-        key("实际 code", code)
-        key("预期 msg", read_expected_msg(case["expected"]))
-        key("实际 msg", msg)
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=read_expected_msg(case["expected"]),
-            actual_code=code,
-            actual_msg=msg,
-            biz_context=biz_context,
-        )
+        data = parse_response_json(res, context="查成员列表")
+        return _jsonpath_parse(data, "$.data[*]") or []
 
 
 class TestEc00FixtureChain(_EmergencyChatHelpers):
@@ -133,9 +122,12 @@ class TestEc01ItemPage(_EmergencyChatHelpers):
         res = http.send_request("get", url, params=params, headers=headers,
                                 case_name=case["name"], log_level="none")
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        code = json_data["code"]
 
         if code == 0 and case.get("item_name") and not case.get("no_auth"):
             items = _jsonpath_parse(json_data, "$.data.items[*]") or []
@@ -147,7 +139,6 @@ class TestEc01ItemPage(_EmergencyChatHelpers):
             assert not strangers, f"模糊查询带出无关群: {strangers}"
             key("模糊查询命中", f"{len(items)} 条全部含 sn={sn}")
 
-        self._assert_and_report(case, code, msg, {"请求参数": params})
 
 
 class TestEc02MemberList(_EmergencyChatHelpers):
@@ -173,9 +164,12 @@ class TestEc02MemberList(_EmergencyChatHelpers):
         res = http.send_request("get", url, params=params, headers=headers,
                                 case_name=case["name"], log_level="none")
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        code = json_data["code"]
 
         if code == 0 and case["name"] == "成员列表-正向":
             members = _jsonpath_parse(json_data, "$.data[*]") or []
@@ -200,7 +194,6 @@ class TestEc02MemberList(_EmergencyChatHelpers):
                 assert ai.get("memberAccount") is not None, \
                     f"成员 {m.get('id')} avatarInfo 缺 memberAccount: {ai}"
 
-        self._assert_and_report(case, code, msg, {"请求参数": params})
 
 
 class TestEc03MemberAdd(_EmergencyChatHelpers):
@@ -228,9 +221,18 @@ class TestEc03MemberAdd(_EmergencyChatHelpers):
         res = http.send_request("post", url, json=body, headers=headers,
                                 case_name=case["name"], log_level="none")
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={
+                "请求body": {
+                    key_name: value
+                    for key_name, value in body.items()
+                    if key_name != "Authorization"
+                }
+            },
+        )
+        code = json_data["code"]
 
         # 正向断言：数据往返——写入什么账号，必须在成员列表可观测到什么
         # 2026-08-17 探测实锤：memberAccount 是内部id（不可预测，如"354"），
@@ -276,7 +278,6 @@ class TestEc03MemberAdd(_EmergencyChatHelpers):
             key("幂等验证", f"添加前={before} 重复添加后={after}")
             assert after <= before + 1, f"重复添加产生多条记录: {before}→{after}"
 
-        self._assert_and_report(case, code, msg, {"请求body": {k:v for k,v in body.items() if k!="Authorization"}})
 
 
 class TestEc04MemberEdit(_EmergencyChatHelpers):
@@ -316,9 +317,12 @@ class TestEc04MemberEdit(_EmergencyChatHelpers):
         res = http.send_request("post", url, json=body, headers=headers,
                                 case_name=case["name"], log_level="none")
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求body": body},
+        )
+        code = json_data["code"]
 
         # 正向断言：数据往返——新昵称在、旧昵称消失（防编辑无效却因残留数据通过）
         if code == 0 and case.get("scenario") == "positive" and not case.get("no_auth"):
@@ -343,7 +347,6 @@ class TestEc04MemberEdit(_EmergencyChatHelpers):
                 assert nick_now == old_nickname, \
                     f"编辑被拒但他人昵称被改: {old_nickname}→{nick_now}"
 
-        self._assert_and_report(case, code, msg, {"请求body": body})
 
 
 class TestEc05Send(_EmergencyChatHelpers):
@@ -373,9 +376,24 @@ class TestEc05Send(_EmergencyChatHelpers):
         res = http.send_request("post", url, params=params, headers=headers,
                                 case_name=case["name"], log_level="none")
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
+        request_context = {
+            "请求参数": {
+                key_name: value
+                for key_name, value in params.items()
+                if key_name != "Authorization"
+            }
+        }
+        if case.get("send_type") == "VIDEO":
+            # VIDEO 响应消息是异常栈，仅比较业务 code，不强制匹配 msg。
+            json_data = assert_response(
+                {"name": case["name"], "expected": {"code": case["expected"]["code"]}},
+                res,
+                biz_context=request_context,
+            )
+        else:
+            json_data = assert_response(case, res, biz_context=request_context)
+        code = json_data["code"]
+        msg = json_data.get("msg") or ""
 
         if code == 0 and case.get("scenario") == "positive" and case.get("send_type") == "TEXT":
             time.sleep(1)
@@ -392,7 +410,12 @@ class TestEc05Send(_EmergencyChatHelpers):
             content = case.get("content")
             res2 = http.send_request("post", url, params=params, headers=headers,
                                      case_name=case["name"] + "-重复", log_level="none")
-            code2 = _jsonpath_parse(res2.json(), "$.code")[0]
+            repeat_json = assert_response(
+                {"name": case["name"] + "-重复", "expected": {"code": case["expected"]["code"]}},
+                res2,
+                biz_context={"请求参数": params},
+            )
+            code2 = repeat_json["code"]
             time.sleep(2)
             records = self._get_record_page(base_url, auth_headers, chat_item_id)
             cnt = sum(1 for r in records if r.get("content") == content)
@@ -405,9 +428,6 @@ class TestEc05Send(_EmergencyChatHelpers):
             key("预期 code", case["expected"]["code"])
             key("实际 code", code)
             key("实际 msg(截断)", msg[:100])
-            assert code == case["expected"]["code"], f"code不匹配: 预期{case['expected']['code']}, 实际{code}"
-        else:
-            self._assert_and_report(case, code, msg, {"请求参数": {k:v for k,v in params.items() if k!="Authorization"}})
 
 
 class TestEc05bSendVoice(_EmergencyChatHelpers):
@@ -442,14 +462,16 @@ class TestEc05bSendVoice(_EmergencyChatHelpers):
             files={"file": ("voice.dvw", wav_like, "application/octet-stream")},
             case_name="发送消息-正向-VOICE(form-data)", log_level="none")
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
-
-        sep(" 断言结果 ")
+        json_data = assert_response(
+            {
+                "name": "发送消息-正向-VOICE(form-data)",
+                "expected": {"code": 0},
+            },
+            res,
+            biz_context={"请求参数": {"chatItemId": chat_item_id, "sendType": "VOICE"}},
+        )
+        code = json_data["code"]
         key("实际 code", code)
-        key("实际 msg", msg)
-        assert code == 0, f"VOICE form-data 发送失败: code={code}, msg={msg}"
 
         # 副作用：record 新增一条 sendType=VOICE（轮询兜异步）
         time.sleep(3)
@@ -489,9 +511,12 @@ class TestEc06RecordPage(_EmergencyChatHelpers):
         res = http.send_request("get", url, params=params, headers=headers,
                                 case_name=case["name"], log_level="none")
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        code = json_data["code"]
 
         if code == 0 and case["name"] == "聊天记录-正向-默认分页":
             items = _jsonpath_parse(json_data, "$.data.items[*]") or []
@@ -521,7 +546,8 @@ class TestEc06RecordPage(_EmergencyChatHelpers):
                                                "chatItemId": chat_item_id, "page": pg, "pageSize": 1},
                                        headers=auth_headers,
                                        case_name=f"翻页第{pg}页", log_level="none")
-                page_items = (_jsonpath_parse(r2.json(), "$.data.items[*]") or [])
+                page_data = parse_response_json(r2, context=f"翻页第{pg}页")
+                page_items = (_jsonpath_parse(page_data, "$.data.items[*]") or [])
                 (p1 if pg == 1 else p2).extend(it.get("id") for it in page_items)
             key("翻页守恒", f"全量={len(full_ids)} P1={p1} P2={p2}")
             assert len(full_ids) >= 1, "全量记录为空，无法验翻页"
@@ -532,7 +558,6 @@ class TestEc06RecordPage(_EmergencyChatHelpers):
                 assert len(p1) == 1 and not p2, f"仅1条记录时应P1=1条P2=空: P1={p1} P2={p2}"
             assert set(p1) | set(p2) <= set(full_ids), "翻页记录不属于本群全量集合"
 
-        self._assert_and_report(case, code, msg, {"请求参数": params})
 
 
 class TestEc07AllRead(_EmergencyChatHelpers):
@@ -557,9 +582,12 @@ class TestEc07AllRead(_EmergencyChatHelpers):
         res = http.send_request("get", url, params=params, headers=headers,
                                 case_name=case["name"], log_level="none")
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        code = json_data["code"]
 
         if code == 0 and case.get("scenario") == "positive":
             time.sleep(1)
@@ -573,7 +601,12 @@ class TestEc07AllRead(_EmergencyChatHelpers):
         if case.get("scenario") == "idempotent":
             res2 = http.send_request("get", url, params=params, headers=headers,
                                     case_name=case["name"]+"-重复", log_level="none")
-            code2 = _jsonpath_parse(res2.json(), "$.code")[0]
+            repeat_json = assert_response(
+                {"name": case["name"] + "-重复", "expected": {"code": 0}},
+                res2,
+                biz_context={"请求参数": params},
+            )
+            code2 = repeat_json["code"]
             # 幂等的数据往返：重复已读后未读数必须仍为 0（code=0 什么也没证）
             time.sleep(1)
             items = self._get_item_page(base_url, auth_headers, emergency_chat_item["sn"])
@@ -583,7 +616,6 @@ class TestEc07AllRead(_EmergencyChatHelpers):
             assert code2 == 0, f"重复调用失败: {code2}"
             assert unread2 == 0, f"重复已读后未读数翻倍/回涨: {unread2}"
 
-        self._assert_and_report(case, code, msg, {"请求参数": params})
 
 
 class TestEc08ReadList(_EmergencyChatHelpers):
@@ -610,9 +642,12 @@ class TestEc08ReadList(_EmergencyChatHelpers):
         res = http.send_request("get", url, params=params, headers=headers,
                                 case_name=case["name"], log_level="none")
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        code = json_data["code"]
 
         if code == 0 and case.get("scenario") == "positive":
             data = json_data.get("data") or {}
@@ -634,7 +669,6 @@ class TestEc08ReadList(_EmergencyChatHelpers):
             assert not outside, f"已读/未读名单出现群外成员: {outside}"
             key("守恒校验", f"已读∪未读={len(read_ids | unread_ids)} ⊆ 群成员={len(member_ids)}")
 
-        self._assert_and_report(case, code, msg, {"请求参数": params})
 
 
 class TestEc09ErrorMsg(_EmergencyChatHelpers):
@@ -661,9 +695,12 @@ class TestEc09ErrorMsg(_EmergencyChatHelpers):
         res = http.send_request("get", url, params=params, headers=headers,
                                 case_name=case["name"], log_level="none")
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        code = json_data["code"]
 
         # 正向数据往返：正常送达的消息，record 的 errorMsg 应为空（成功态）
         # 实现方式：从 record/page 查该 recordId 的 errorMsg 字段并断言为空
@@ -676,7 +713,6 @@ class TestEc09ErrorMsg(_EmergencyChatHelpers):
                 key("record.errorMsg", em)
                 assert not em, f"正常消息 errorMsg 非空: {em}"
 
-        self._assert_and_report(case, code, msg, {"请求参数": params})
 
 
 class TestEc10ItemComplete(_EmergencyChatHelpers):
@@ -716,9 +752,12 @@ class TestEc10ItemComplete(_EmergencyChatHelpers):
         res = http.send_request("get", url, params=params, headers=headers,
                                 case_name=case["name"], log_level="none")
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        code = json_data["code"]
 
         # 正向：副作用三连——列表 status=0 / status接口 true / 回写 extract 供 5-7 状态机反例
         if code == 0 and case.get("scenario") == "positive":
@@ -746,15 +785,18 @@ class TestEc10ItemComplete(_EmergencyChatHelpers):
         if case.get("scenario") == "idempotent":
             res2 = http.send_request("get", url, params=params, headers=headers,
                                      case_name=case["name"] + "-重复", log_level="none")
-            jd2 = res2.json()
-            code2 = _jsonpath_parse(jd2, "$.code")[0]
-            msg2 = _jsonpath_parse(jd2, "$.msg")[0] if _jsonpath_parse(jd2, "$.msg") else ""
+            repeat_json = assert_response(
+                {"name": case["name"] + "-重复", "expected": {"code": case["expected"]["code"]}},
+                res2,
+                biz_context={"请求参数": params},
+            )
+            code2 = repeat_json["code"]
+            msg2 = repeat_json.get("msg") or ""
             key("幂等验证", f"重复 complete code={code2} msg={msg2}")
             final = self._get_complete_status(base_url, auth_headers, chat_item_id)
             key("最终 isCompleted", final)
             assert final is True, f"重复 complete 后群终态异常: isCompleted={final}"
 
-        self._assert_and_report(case, code, msg, {"请求参数": params})
 
 
 class TestEc10bSendAfterComplete(_EmergencyChatHelpers):
@@ -783,19 +825,19 @@ class TestEc10bSendAfterComplete(_EmergencyChatHelpers):
         res = http.send_request("post", url, params=params, headers=auth_headers,
                                 case_name="发送消息-状态机-已完成群聊再发", log_level="none")
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
-
-        sep(" 断言结果 ")
+        json_data = assert_response(
+            {
+                "name": "发送消息-状态机-已完成群聊再发",
+                "expected": {"code": 1001, "msg": "救援已结束，无法发送消息"},
+            },
+            res,
+            biz_context={"请求参数": params},
+        )
         key("已完成群 chatItemId", chat_item_id)
-        key("实际 code", code)
-        key("实际 msg", msg)
+        key("实际 code", json_data["code"])
+        key("实际 msg", json_data.get("msg"))
         # 2026-08-17 实测：状态机护栏存在——code=1001 "救援已结束，无法发送消息"。
         # 2026-08-14 旧记录「已完成群仍可发消息(code=0)」系 extract 缺键静默回退活跃群的假阳性，已纠正。
-        # 非法跃迁拦截为非 0 即可（msg 锁实测值防回归劣化）
-        assert code != 0, f"已完成群聊发消息未被拦截: code={code}, msg={msg}"
-        assert msg == "救援已结束，无法发送消息", f"拦截提示语与实测基线不符: {msg}"
 
 
 class TestEc11CompleteStatus(_EmergencyChatHelpers):
@@ -821,9 +863,12 @@ class TestEc11CompleteStatus(_EmergencyChatHelpers):
         res = http.send_request("get", url, params=params, headers=headers,
                                 case_name=case["name"], log_level="none")
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        code = json_data["code"]
 
         # 语义断言：hasPermission 必为 bool；主群已被 10 批次 complete → isCompleted=true
         if code == 0 and case.get("scenario") == "semantic":
@@ -835,7 +880,6 @@ class TestEc11CompleteStatus(_EmergencyChatHelpers):
             assert isinstance(hp, bool), f"hasPermission 应为 bool: {hp}"
             assert ic is True, f"已完成群 isCompleted 应为 true: {ic}"
 
-        self._assert_and_report(case, code, msg, {"请求参数": params})
 
 
 class TestEc13ClearUnread(_EmergencyChatHelpers):
@@ -856,9 +900,12 @@ class TestEc13ClearUnread(_EmergencyChatHelpers):
         res = http.send_request("put", url, params=params, headers=headers,
                                 case_name=case["name"], log_level="none")
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        code = json_data["code"]
 
         # 正向副作用：列表第一页所有群 unreadCount=0
         if code == 0 and case.get("scenario") == "positive":
@@ -868,7 +915,8 @@ class TestEc13ClearUnread(_EmergencyChatHelpers):
                            "page": 1, "pageSize": 50}
             r = http.send_request("get", list_url, params=list_params, headers=auth_headers,
                                   case_name="查全部群聊", log_level="none")
-            items = _jsonpath_parse(r.json(), "$.data.items[*]") or []
+            list_data = parse_response_json(r, context="查全部群聊")
+            items = _jsonpath_parse(list_data, "$.data.items[*]") or []
             not_cleared = [(it.get("itemName"), it.get("unreadCount"))
                            for it in items if it.get("unreadCount")]
             key("未清零群数", len(not_cleared))
@@ -878,11 +926,14 @@ class TestEc13ClearUnread(_EmergencyChatHelpers):
         if case.get("scenario") == "idempotent":
             res2 = http.send_request("put", url, params=params, headers=headers,
                                      case_name=case["name"] + "-重复", log_level="none")
-            code2 = _jsonpath_parse(res2.json(), "$.code")[0]
+            repeat_json = assert_response(
+                {"name": case["name"] + "-重复", "expected": {"code": 0}},
+                res2,
+                biz_context={"请求参数": params},
+            )
+            code2 = repeat_json["code"]
             key("幂等验证", f"重复清空 code={code2}")
-            assert code2 == 0, f"重复清空失败: {code2}"
 
-        self._assert_and_report(case, code, msg, {"请求参数": params})
 
 
 class TestEc14Expiration(_EmergencyChatHelpers):
@@ -916,9 +967,12 @@ class TestEc14Expiration(_EmergencyChatHelpers):
         res = http.send_request("get", url, params=params, headers=headers,
                                 case_name=case["name"], log_level="none")
         print_response(res)
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        code = json_data["code"]
 
         # 正向副作用：群聊不再处于活跃态
         if code == 0 and active_chat:
@@ -931,7 +985,6 @@ class TestEc14Expiration(_EmergencyChatHelpers):
             else:
                 key("关闭后查询", "群已不在列表（视为已关闭）")
 
-        self._assert_and_report(case, code, msg, {"请求参数": params})
 
 
 class TestEc15CancelSos(_EmergencyChatHelpers):
@@ -973,8 +1026,13 @@ class TestEc15CancelSos(_EmergencyChatHelpers):
         }
         res = http.send_request("post", url, params=params, headers=auth_headers,
                                 case_name="取消SOS后发消息", log_level="none")
-        code = _jsonpath_parse(res.json(), "$.code")[0]
-        msg = _jsonpath_parse(res.json(), "$.msg")[0] if _jsonpath_parse(res.json(), "$.msg") else ""
-        key("取消后发消息 code", code)
-        key("取消后发消息 msg", msg)
-        assert code != 0, f"取消SOS后群内发消息未被拦截: code={code}, msg={msg}"
+        response_data = assert_response(
+            {
+                "name": "取消SOS后发消息",
+                "expected": {"code": 1001, "msg": "救援已结束，无法发送消息"},
+            },
+            res,
+            biz_context={"请求参数": params},
+        )
+        key("取消后发消息 code", response_data["code"])
+        key("取消后发消息 msg", response_data.get("msg"))

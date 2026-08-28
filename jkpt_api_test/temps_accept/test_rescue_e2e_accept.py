@@ -16,7 +16,7 @@ class TestRescueE2EAccept:
 
     def test_e2e_chat_item_in_list(self, base_url, auth_headers, emergency_chat_item):
         """提取的 chatItemId 能在群聊列表中查到（闭环验证）"""
-        from common.requests_util import BaseRequest
+        from common.requests_util import BaseRequest, parse_response_json
         import jsonpath
         http = BaseRequest()
         r = http.send_request(
@@ -28,7 +28,8 @@ class TestRescueE2EAccept:
             case_name="验收-群聊列表查",
             log_level="none",
         )
-        items = jsonpath.jsonpath(r.json(), "$.data.items[*]") or []
+        response_data = parse_response_json(r, context="验收-群聊列表查")
+        items = jsonpath.jsonpath(response_data, "$.data.items[*]") or []
         ids = [it.get("id") for it in items]
         assert emergency_chat_item["chatItemId"] in ids, f"chatItemId 不在列表: {ids}"
         print(f"\n列表闭环: chatItemId={emergency_chat_item['chatItemId']} 在列")

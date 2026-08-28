@@ -10,14 +10,13 @@
 import jsonpath
 import pytest
 
-from common.allure_assert_util import assert_api_result
 from common.buy_cooldown_util import mark_bought, wait_buy_cooldown
+from common.case_report_util import assert_response
 from common.cleanup import register_unpaid_order_no
 from common.logger_util import key, print_request, print_response, sep
 from common.requests_util import BaseRequest
 from common.yaml_util import (
     is_extract_placeholder,
-    read_expected_msg,
     read_yaml,
     resolve_extract_value,
     write_yaml,
@@ -59,24 +58,6 @@ class _EcmHelpers:
             headers = {k: v for k, v in headers.items() if k.lower() != "authorization"}
         return headers
 
-    def _assert_and_report(self, case, json_data, biz_context):
-        code = _jp_first(json_data, "$.code")
-        msg = _jp_first(json_data, "$.msg") or ""
-        exp_msg = read_expected_msg(case["expected"])
-        sep(" 断言结果 ")
-        key("预期 code", case["expected"]["code"])
-        key("实际 code", code)
-        key("预期 msg", exp_msg)
-        key("实际 msg", msg)
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=exp_msg,
-            actual_code=code,
-            actual_msg=msg,
-            biz_context=biz_context,
-        )
-
 
 class TestEcm01Mall(_EcmHelpers):
     """GET /emergency/combo/mall — 套餐商城列表"""
@@ -98,13 +79,16 @@ class TestEcm01Mall(_EcmHelpers):
             case_name=case["name"], log_level="none",
         )
         print_response(res)
-        json_data = res.json()
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
 
-        if _jp_first(json_data, "$.code") == 0 and not case.get("no_auth"):
+        if json_data["code"] == 0 and not case.get("no_auth"):
             self._assert_mall_shape(case, json_data)
             self._maybe_write_mall_extract(case, json_data)
 
-        self._assert_and_report(case, json_data, {"请求参数": params})
 
     @staticmethod
     def _assert_mall_shape(case, json_data):
@@ -169,9 +153,13 @@ class TestEcm02ComboInfo(_EcmHelpers):
             case_name=case["name"], log_level="none",
         )
         print_response(res)
-        json_data = res.json()
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
 
-        if _jp_first(json_data, "$.code") == 0 and not case.get("no_auth"):
+        if json_data["code"] == 0 and not case.get("no_auth"):
             data = json_data.get("data")
             assert isinstance(data, list), f"[{case['name']}] data 不是 list: {type(data)}"
             if not data:
@@ -184,7 +172,6 @@ class TestEcm02ComboInfo(_EcmHelpers):
                 assert not bad, f"[{case['name']}] 按 status={case['status']} 筛选仍出现 {bad[:5]}"
             self._maybe_write_info_extract(case, data)
 
-        self._assert_and_report(case, json_data, {"请求参数": params})
 
     @staticmethod
     def _pick_latest_user_combo(items):
@@ -244,15 +231,18 @@ class TestEcm03Remaining(_EcmHelpers):
             case_name=case["name"], log_level="none",
         )
         print_response(res)
-        json_data = res.json()
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
 
-        if _jp_first(json_data, "$.code") == 0 and not case.get("no_auth"):
+        if json_data["code"] == 0 and not case.get("no_auth"):
             data = json_data.get("data") or {}
             assert isinstance(data, dict), f"[{case['name']}] data 不是对象: {type(data)}"
             for field in ("allRemainingVoiceNumber", "allRemainingPositionNumber", "latestInfo"):
                 assert field in data, f"[{case['name']}] 缺字段 {field}"
 
-        self._assert_and_report(case, json_data, {"请求参数": params})
 
 
 class TestEcm04UsagePage(_EcmHelpers):
@@ -282,9 +272,13 @@ class TestEcm04UsagePage(_EcmHelpers):
             case_name=case["name"], log_level="none",
         )
         print_response(res)
-        json_data = res.json()
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
 
-        if _jp_first(json_data, "$.code") == 0 and not case.get("no_auth"):
+        if json_data["code"] == 0 and not case.get("no_auth"):
             items = _jp_first(json_data, "$.data.items")
             assert isinstance(items, list), f"[{case['name']}] $.data.items 不是 list: {items!r}"
             if not items:
@@ -300,7 +294,6 @@ class TestEcm04UsagePage(_EcmHelpers):
                         f"[{case['name']}] 按 comboId 筛选仍出现其它 addr: {bad[:5]}"
                     )
 
-        self._assert_and_report(case, json_data, {"请求参数": params})
 
 
 class TestEcm05Buy(_EcmHelpers):
@@ -331,12 +324,16 @@ class TestEcm05Buy(_EcmHelpers):
                 case_name=case["name"], log_level="none",
             )
             print_response(res)
-            json_data = res.json()
         finally:
             if apply_cooldown:
                 mark_bought()
 
-        if _jp_first(json_data, "$.code") == 0 and not case.get("no_auth"):
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": body},
+        )
+        if json_data["code"] == 0 and not case.get("no_auth"):
             order_no = _jp_first(json_data, "$.data.orderNo")
             assert order_no, f"[{case['name']}] 未返回 $.data.orderNo"
             write_yaml("./extract.yaml", {"combo_order_no": order_no}, mode="append")
@@ -355,7 +352,6 @@ class TestEcm05Buy(_EcmHelpers):
                 )
             self._assert_unpaid_visible(base_url, auth_headers, rescue_sat_terminal, case["name"])
 
-        self._assert_and_report(case, json_data, {"请求参数": body})
 
     @staticmethod
     def _assert_unpaid_visible(base_url, auth_headers, sn, case_name):
@@ -365,8 +361,11 @@ class TestEcm05Buy(_EcmHelpers):
             "get", url, params=params, headers=auth_headers,
             case_name=f"{case_name}-查未付款", log_level="none",
         )
-        json_data = res.json()
-        assert _jp_first(json_data, "$.code") == 0, f"[{case_name}] buy 后查 info 失败: {json_data}"
+        json_data = assert_response(
+            {"name": f"{case_name}-查未付款", "expected": {"code": 0}},
+            res,
+            biz_context={"请求参数": params},
+        )
         items = json_data.get("data") or []
         hit = [it for it in items if isinstance(it, dict) and it.get("addr") == sn and it.get("status") == 0]
         assert hit, f"[{case_name}] buy 后 info status=0 未见 addr={sn}"

@@ -1,5 +1,5 @@
 [tool.pytest.ini_options]
-addopts = "-vs --alluredir=./temps --clean-alluredir"
+addopts = "-vs"
 testpaths = ["testcases"]
 
 [project]

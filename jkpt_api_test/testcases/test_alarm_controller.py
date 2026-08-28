@@ -13,12 +13,13 @@
 import time
 
 import jsonpath
+import requests
 import pytest
 
-from common.allure_assert_util import assert_api_result
+from common.case_report_util import assert_response, report_extra_and_assert
 from common.logger_util import key, print_request, print_response, sep
-from common.requests_util import BaseRequest
-from common.yaml_util import read_yaml, write_yaml, resolve_extract_value, read_expected_msg
+from common.requests_util import BaseRequest, parse_response_json
+from common.yaml_util import read_yaml, write_yaml, resolve_extract_value
 
 _jsonpath_parse = jsonpath.jsonpath
 http = BaseRequest()
@@ -68,19 +69,53 @@ class _AlarmHelpers:
 
     @staticmethod
     def _seed_alarm_for_addr(bd_client, from_addr, case_name):
+        # 13 报文可能按终端/秒去重；跨批次留出时间并使用唯一坐标。
+        time.sleep(1.1)
+        nonce = (time.time_ns() // 1_000_000) % 10000
+        offset = nonce / 1_000_000
         r = bd_client.send_alarm_13(
-            from_addr=from_addr, phone="13250703582", case_name=case_name
+            from_addr=from_addr,
+            lon=113.466203 + offset,
+            lat=23.170439 + offset,
+            phone="13250703582",
+            case_name=case_name,
         )
         if not r.success:
             pytest.fail(f"协议造数失败 from_addr={from_addr}: code={r.code}, msg={r.msg}")
 
     @staticmethod
     def _seed_alarm_for_two_terminals(bd_client, msg_addr, bd_addr, case_name):
+        time.sleep(1.1)
+        nonce = (time.time_ns() // 1_000_000) % 10000
+        offset = nonce / 1_000_000
         r = bd_client.send_alarm_13_batch(
-            from_addrs=[msg_addr, bd_addr], phone="13250703582", case_name=case_name
+            from_addrs=[msg_addr, bd_addr],
+            lon=113.466203 + offset,
+            lat=23.170439 + offset,
+            phone="13250703582",
+            case_name=case_name,
         )
         if not r.success:
             pytest.fail(f"批量协议造数失败: code={r.code}, msg={r.msg}")
+
+    @staticmethod
+    def _get_alarm_json(url, params, headers, context):
+        """报警查询遇到远端瞬断时允许一次重试，避免把传输抖动误判为业务失败。"""
+        for attempt in range(2):
+            try:
+                response = http.send_request(
+                    "get",
+                    url,
+                    params=params,
+                    headers=headers,
+                    case_name=context,
+                    log_level="none",
+                )
+                return parse_response_json(response, context=context)
+            except requests.exceptions.ConnectionError:
+                if attempt == 1:
+                    raise
+                time.sleep(0.5)
 
     @staticmethod
     def _query_alarm_items(base_url, headers, addr, page=1, page_size=50):
@@ -91,15 +126,12 @@ class _AlarmHelpers:
             "page": page,
             "pageSize": page_size,
         }
-        res = http.send_request(
-            "get",
+        data = _AlarmHelpers._get_alarm_json(
             url,
-            params=params,
-            headers=headers,
-            case_name=f"查询报警列表-{addr}",
-            log_level="none",
+            params,
+            headers,
+            context=f"查询报警列表-{addr}",
         )
-        data = res.json()
         items = _jsonpath_parse(data, "$.data.items[*]")
         if items:
             return items
@@ -118,15 +150,12 @@ class _AlarmHelpers:
             "page": page,
             "pageSize": page_size,
         }
-        r2 = http.send_request(
-            "get",
+        d2 = _AlarmHelpers._get_alarm_json(
             fallback_url,
-            params=fallback_params,
-            headers=headers,
-            case_name=f"查询报警列表回退-{addr}",
-            log_level="none",
+            fallback_params,
+            headers,
+            context=f"查询报警列表回退-{addr}",
         )
-        d2 = r2.json()
         items2 = _jsonpath_parse(d2, "$.data.items[*]")
         if items2:
             return items2
@@ -135,22 +164,54 @@ class _AlarmHelpers:
 
     @staticmethod
     def _is_unhandled_alarm(item):
-        # 兼容不同字段命名/类型，统一判断“未处理”状态
-        for key_name in ("handleStatus", "status", "handled"):
-            if key_name not in item:
-                continue
-            val = item.get(key_name)
-            if isinstance(val, bool):
-                return not val
-            if isinstance(val, int):
-                return val in (0, 1)
-            if isinstance(val, str):
-                v = val.strip().lower()
-                if any(k in v for k in ("unhandled", "未处理", "new", "pending")):
+        """根据真实报警 DTO 判断未处理；无法判断时返回 None，禁止猜测。"""
+        if not isinstance(item, dict):
+            return None
+
+        def state_from_value(value):
+            if isinstance(value, bool):
+                return not value
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value == 0
+            if isinstance(value, dict):
+                for field_name in ("name", "value", "label", "status"):
+                    if field_name in value:
+                        state = state_from_value(value[field_name])
+                        if state is not None:
+                            return state
+                return None
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                compact = normalized.replace("_", "").replace("-", "")
+                if any(marker in compact for marker in (
+                    "unhandled", "unprocessed", "nothandle", "未处理", "new", "pending", "待处理", "unread"
+                )):
                     return True
-                if any(k in v for k in ("handled", "已处理", "done")):
+                if any(marker in compact for marker in (
+                    "handled", "processed", "已处理", "done", "complete", "completed", "处理完"
+                )):
                     return False
-        return True
+            return None
+
+        for key_name in ("handleStatus", "status", "handled"):
+            if key_name in item:
+                state = state_from_value(item.get(key_name))
+                if state is not None:
+                    return state
+
+        # AlarmInfoRespDto 使用 handleTimeStr；有处理时间即代表已处理。
+        for key_name in ("handleTimeStr", "handleTime", "handledTime"):
+            if key_name in item:
+                value = item.get(key_name)
+                if value not in (None, ""):
+                    return False
+                if value == "" and key_name == "handleTimeStr":
+                    return True
+
+        # 只有显式空字符串才能作为“未处理”辅助证据；None 代表未知。
+        if "handleResult" in item:
+            return True if item.get("handleResult") == "" else None
+        return None
 
     def _extract_single_alarm_id_with_retry(
         self, base_url, headers, addr, bd_client, retry_seed_addr
@@ -197,20 +258,28 @@ class _AlarmHelpers:
         return ids[0]
 
     @staticmethod
-    def _query_latest_alarm_id(base_url, headers, addr):
+    def _query_latest_alarm_data(base_url, headers, addr):
         url = f"{base_url}/api/monitor/alarms/latest/{addr}"
-        res = http.send_request(
-            "get",
+        data = _AlarmHelpers._get_alarm_json(
             url,
-            headers=headers,
-            case_name=f"查询最新报警-{addr}",
-            log_level="none",
+            None,
+            headers,
+            context=f"查询最新报警-{addr}",
         )
-        data = res.json()
-        direct = _jsonpath_parse(data, "$.data.id")
+        latest = data.get("data")
+        return latest if isinstance(latest, dict) else None
+
+    @staticmethod
+    def _query_latest_alarm_id(base_url, headers, addr):
+        latest = _AlarmHelpers._query_latest_alarm_data(base_url, headers, addr)
+        if latest is not None and latest.get("id") not in (None, ""):
+            return latest["id"]
+        if latest is None:
+            return None
+        direct = _jsonpath_parse(latest, "$.id")
         if direct:
             return direct[0]
-        deep = _jsonpath_parse(data, "$..id")
+        deep = _jsonpath_parse(latest, "$..id")
         if not deep:
             return None
         for v in deep:
@@ -234,7 +303,7 @@ class _AlarmHelpers:
             case_name="查询全局报警列表兜底",
             log_level="none",
         )
-        data = r.json()
+        data = parse_response_json(r, context="查询全局报警列表兜底")
         ids = _jsonpath_parse(data, "$.data.items[*].id")
         if ids:
             return ids
@@ -280,24 +349,294 @@ class _AlarmHelpers:
             pytest.fail(f"batch-handle/ids 提取ID不足: 需要{need_count}条，实际{len(ids)}条")
         return ids[:need_count]
 
-    def _assert_and_report(self, case, res):
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        msg = _jsonpath_parse(json_data, "$.msg")[0] if _jsonpath_parse(json_data, "$.msg") else ""
+    def _wait_for_new_alarm_ids(
+        self,
+        base_url,
+        headers,
+        address,
+        previous_ids,
+        minimum_count=1,
+        attempts=10,
+        interval_seconds=1.0,
+    ):
+        previous_id_strings = {str(alarm_id) for alarm_id in previous_ids}
+        for _ in range(attempts):
+            items = self._query_alarm_items(base_url, headers, address)
+            new_ids = [
+                item.get("id")
+                for item in items
+                if isinstance(item, dict)
+                and item.get("id") not in (None, "")
+                and str(item.get("id")) not in previous_id_strings
+            ]
+            if len(new_ids) >= minimum_count:
+                return new_ids
+            # history 索引可能滞后；latest 接口先看到本轮唯一报警时也可作为 ID 证据。
+            latest_id = self._query_latest_alarm_id(base_url, headers, address)
+            if (
+                latest_id is not None
+                and str(latest_id) not in previous_id_strings
+            ):
+                return [latest_id]
+            time.sleep(interval_seconds)
+        pytest.fail(
+            f"协议造数后未发现新报警ID: address={address}, "
+            f"minimum_count={minimum_count}"
+        )
 
-        sep(" 断言结果 ")
-        key("预期 code", case["expected"]["code"])
-        key("实际 code", code)
-        key("预期 msg", read_expected_msg(case["expected"]))
-        key("实际 msg", msg)
+    def _assert_and_report(self, case, response, biz_context=None):
+        return assert_response(
+            case,
+            response,
+            biz_context=biz_context or {"请求用例": case["name"]},
+        )
 
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=read_expected_msg(case["expected"]),
-            actual_code=code,
-            actual_msg=msg,
-            biz_context={"请求用例": case["name"]},
+    @staticmethod
+    def _extract_page_items(json_data):
+        data = json_data.get("data")
+        if isinstance(data, list):
+            return data
+        if not isinstance(data, dict):
+            return None
+        for field_name in ("items", "records"):
+            if field_name in data:
+                return data[field_name]
+        return None
+
+    def _assert_page_structure(self, case, json_data):
+        if case.get("scenario") != "positive":
+            return
+        items = self._extract_page_items(json_data)
+        item_ids = [
+            item.get("id")
+            for item in items or []
+            if isinstance(item, dict)
+        ]
+        report_extra_and_assert(
+            "报警分页结构",
+            [
+                {
+                    "项": "data 分页列表",
+                    "期望": "list",
+                    "实际": type(items).__name__,
+                    "通过": isinstance(items, list),
+                },
+                {
+                    "项": "报警记录 id",
+                    "期望": "非空",
+                    "实际": item_ids[:5],
+                    "通过": bool(item_ids) and all(
+                        item_id not in (None, "") for item_id in item_ids
+                    ),
+                },
+            ],
+            summary=f"分页结构有效，记录数={len(items or [])}",
+        )
+
+    @staticmethod
+    def _assert_latest_structure(case, json_data):
+        if case.get("scenario") != "positive":
+            return
+        latest_alarm = json_data.get("data")
+        report_extra_and_assert(
+            "最新报警结构",
+            [
+                {
+                    "项": "data 类型",
+                    "期望": "dict",
+                    "实际": type(latest_alarm).__name__,
+                    "通过": isinstance(latest_alarm, dict),
+                },
+                {
+                    "项": "报警 id",
+                    "期望": "非空",
+                    "实际": latest_alarm.get("id") if isinstance(latest_alarm, dict) else None,
+                    "通过": isinstance(latest_alarm, dict)
+                    and latest_alarm.get("id") not in (None, ""),
+                },
+            ],
+            summary="最新报警结构有效",
+        )
+
+    @staticmethod
+    def _assert_batch_info_structure(case, json_data):
+        if case.get("scenario") != "positive":
+            return
+        batch_info = json_data.get("data")
+        report_extra_and_assert(
+            "报警类型统计结构",
+            [
+                {
+                    "项": "data 类型",
+                    "期望": "list",
+                    "实际": type(batch_info).__name__,
+                    "通过": isinstance(batch_info, list),
+                }
+            ],
+            summary=f"报警类型统计结构有效，类型数={len(batch_info or [])}",
+        )
+
+    def _find_alarm_by_id(self, base_url, headers, addresses, alarm_id):
+        for address in addresses:
+            for item in self._query_alarm_items(base_url, headers, address):
+                if isinstance(item, dict) and str(item.get("id")) == str(alarm_id):
+                    return item
+            latest = self._query_latest_alarm_data(base_url, headers, address)
+            if isinstance(latest, dict) and str(latest.get("id")) == str(alarm_id):
+                return latest
+        return None
+
+    def _wait_for_unhandled_alarm(
+        self,
+        base_url,
+        headers,
+        addresses,
+        alarm_id,
+        attempts=6,
+        interval_seconds=1.0,
+    ):
+        """处理前确认目标报警可判定为未处理，避免误处理历史记录。"""
+        last_item = None
+        last_state = None
+        for attempt in range(1, attempts + 1):
+            last_item = self._find_alarm_by_id(
+                base_url,
+                headers,
+                addresses,
+                alarm_id,
+            )
+            last_state = self._is_unhandled_alarm(last_item)
+            if last_state is True:
+                key("处理前状态轮询次数", attempt)
+                return last_item
+            if attempt < attempts:
+                time.sleep(interval_seconds)
+        report_extra_and_assert(
+            "报警处理前置状态",
+            [
+                {
+                    "项": "目标报警",
+                    "期望": f"id={alarm_id} 可确认未处理",
+                    "实际": {
+                        "状态": last_state,
+                        "记录": last_item,
+                    },
+                    "通过": False,
+                }
+            ],
+            summary="报警处理前状态有效",
+        )
+        return None
+
+    @staticmethod
+    def _handled_evidence(item, expected_handle_result):
+        if not isinstance(item, dict):
+            return False, {"原因": "目标报警不存在"}
+        handle_result = item.get("handleResult")
+        handle_status = item.get("handleStatus")
+
+        def handled_status(value):
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value > 0
+            if isinstance(value, dict):
+                for field_name in ("name", "value", "label", "status"):
+                    if field_name in value:
+                        result = handled_status(value[field_name])
+                        if result is not None:
+                            return result
+                return None
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                compact = normalized.replace("_", "").replace("-", "")
+                if any(marker in compact for marker in (
+                    "unhandled", "unprocessed", "nothandle", "未处理", "new", "pending", "待处理", "unread"
+                )):
+                    return False
+                if any(marker in compact for marker in (
+                    "handled", "processed", "已处理", "done", "complete", "completed", "处理完"
+                )):
+                    return True
+            return None
+
+        status_state = handled_status(handle_status)
+        if status_state is True:
+            return True, {
+                "handleStatus": handle_status,
+                "handleResult": handle_result,
+            }
+        if status_state is False:
+            return False, {
+                "handleStatus": handle_status,
+                "handleResult": handle_result,
+            }
+        if item.get("handled") is True:
+            return True, {"handled": True, "handleResult": handle_result}
+        for key_name in ("handleTimeStr", "handleTime", "handledTime"):
+            if item.get(key_name):
+                return True, {
+                    key_name: item.get(key_name),
+                    "handleResult": handle_result,
+                }
+
+        # 仅当响应完全没有状态/时间字段时，才兼容以处理结果作为唯一证据。
+        has_state_fields = any(
+            key_name in item
+            for key_name in ("handleStatus", "handled", "status", "handleTimeStr", "handleTime", "handledTime")
+        )
+        if (
+            not has_state_fields
+            and expected_handle_result
+            and handle_result == expected_handle_result
+        ):
+            return True, {"handleResult": handle_result, "兼容证据": "无状态字段"}
+        return False, {
+            "handleStatus": handle_status,
+            "handled": item.get("handled"),
+            "handleTimeStr": item.get("handleTimeStr"),
+            "handleResult": handle_result,
+        }
+
+    def _wait_for_handled_alarm(
+        self,
+        base_url,
+        headers,
+        addresses,
+        alarm_id,
+        expected_handle_result,
+        attempts=6,
+        interval_seconds=1.0,
+    ):
+        last_item = None
+        last_evidence = {"原因": "尚未查询"}
+        for attempt in range(1, attempts + 1):
+            last_item = self._find_alarm_by_id(
+                base_url,
+                headers,
+                addresses,
+                alarm_id,
+            )
+            handled, last_evidence = self._handled_evidence(
+                last_item,
+                expected_handle_result,
+            )
+            if handled:
+                key("后置验证轮询次数", attempt)
+                return
+            if attempt < attempts:
+                time.sleep(interval_seconds)
+        report_extra_and_assert(
+            "报警处理后置状态",
+            [
+                {
+                    "项": "目标报警",
+                    "期望": f"id={alarm_id} 已处理",
+                    "实际": last_evidence,
+                    "通过": False,
+                }
+            ],
+            summary="报警处理状态已落地",
         )
 
 
@@ -351,7 +690,12 @@ class TestAl01AlarmList(_AlarmHelpers):
             log_level="none",
         )
         print_response(res)
-        self._assert_and_report(case, res)
+        json_data = self._assert_and_report(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        self._assert_page_structure(case, json_data)
 
 
 class TestAl02AlarmHistory(_AlarmHelpers):
@@ -376,7 +720,12 @@ class TestAl02AlarmHistory(_AlarmHelpers):
             log_level="none",
         )
         print_response(res)
-        self._assert_and_report(case, res)
+        json_data = self._assert_and_report(
+            case,
+            res,
+            biz_context={"设备地址": addr, "请求参数": params},
+        )
+        self._assert_page_structure(case, json_data)
 
 
 class TestAl03AlarmLatest(_AlarmHelpers):
@@ -399,7 +748,12 @@ class TestAl03AlarmLatest(_AlarmHelpers):
             log_level="none",
         )
         print_response(res)
-        self._assert_and_report(case, res)
+        json_data = self._assert_and_report(
+            case,
+            res,
+            biz_context={"设备地址": addr},
+        )
+        self._assert_latest_structure(case, json_data)
 
 
 class TestAl04AlarmHandle(_AlarmHelpers):
@@ -414,24 +768,38 @@ class TestAl04AlarmHandle(_AlarmHelpers):
         headers = {**auth_headers}
 
         if case.get("scenario") == "positive":
-            # 单条处理固定使用 msg 设备报警，避免与批量链路抢数据
+            existing_ids = [
+                item.get("id")
+                for item in self._query_alarm_items(
+                    base_url,
+                    headers,
+                    msg_test_terminal,
+                )
+                if isinstance(item, dict) and item.get("id") not in (None, "")
+            ]
             self._seed_alarm_for_addr(
                 bd_client=bd_client,
                 from_addr=msg_test_terminal,
                 case_name=f"{case['name']}-seed",
             )
-            # 先从接口动态提取单条报警ID，再写入 extract.yaml 供当前用例读取
-            alarm_id = self._extract_single_alarm_id_with_retry(
-                base_url=base_url,
-                headers=headers,
-                addr=msg_test_terminal,
-                bd_client=bd_client,
-                retry_seed_addr=msg_test_terminal,
-            )
+            alarm_id = self._wait_for_new_alarm_ids(
+                base_url,
+                headers,
+                msg_test_terminal,
+                existing_ids,
+            )[0]
             write_yaml("./extract.yaml", {"alarm_single_id": alarm_id}, mode="append")
             alarm_id = resolve_extract_value("{{alarm_single_id}}", required=True)
         else:
             alarm_id = resolve_extract_value(case.get("id"), required=True)
+
+        if case.get("scenario") == "positive":
+            self._wait_for_unhandled_alarm(
+                base_url,
+                headers,
+                [msg_test_terminal],
+                alarm_id,
+            )
 
         url = f"{base_url}/api/monitor/alarms/{alarm_id}"
         params = {"handleResult": handle_result}
@@ -447,7 +815,19 @@ class TestAl04AlarmHandle(_AlarmHelpers):
             log_level="none",
         )
         print_response(res)
-        self._assert_and_report(case, res)
+        self._assert_and_report(
+            case,
+            res,
+            biz_context={"报警 ID": alarm_id, "处理结果": handle_result},
+        )
+        if case.get("scenario") == "positive":
+            self._wait_for_handled_alarm(
+                base_url,
+                headers,
+                [msg_test_terminal],
+                alarm_id,
+                handle_result,
+            )
 
 
 class TestAl05AlarmBatchHandle(_AlarmHelpers):
@@ -463,12 +843,35 @@ class TestAl05AlarmBatchHandle(_AlarmHelpers):
         alarm_type = case.get("alarmTypes", "")
         handle_result = case.get("handle_result", case.get("handleResult", "批量已处理"))
 
+        target_alarm_ids = []
         if case.get("scenario") == "positive":
+            existing_ids = [
+                item.get("id")
+                for item in self._query_alarm_items(
+                    base_url,
+                    headers,
+                    msg_test_terminal,
+                )
+                if isinstance(item, dict) and item.get("id") not in (None, "")
+            ]
             self._seed_alarm_for_addr(
                 bd_client=bd_client,
                 from_addr=msg_test_terminal,
                 case_name=f"{case['name']}-seed",
             )
+            target_alarm_ids = self._wait_for_new_alarm_ids(
+                base_url,
+                headers,
+                msg_test_terminal,
+                existing_ids,
+            )
+            for target_alarm_id in target_alarm_ids:
+                self._wait_for_unhandled_alarm(
+                    base_url,
+                    headers,
+                    [msg_test_terminal],
+                    target_alarm_id,
+                )
 
         body = {"alarmTypes": alarm_type, "handleResult": handle_result}
 
@@ -483,7 +886,20 @@ class TestAl05AlarmBatchHandle(_AlarmHelpers):
             log_level="none",
         )
         print_response(res)
-        self._assert_and_report(case, res)
+        self._assert_and_report(
+            case,
+            res,
+            biz_context={"报警类型": alarm_type, "处理结果": handle_result},
+        )
+        if case.get("scenario") == "positive":
+            for target_alarm_id in target_alarm_ids:
+                self._wait_for_handled_alarm(
+                    base_url,
+                    headers,
+                    [msg_test_terminal],
+                    target_alarm_id,
+                    handle_result,
+                )
 
 
 class TestAl06AlarmBatchHandleIds(_AlarmHelpers):
@@ -499,23 +915,44 @@ class TestAl06AlarmBatchHandleIds(_AlarmHelpers):
         handle_result = case.get("handle_result", case.get("handleResult", "批量已处理"))
 
         if case.get("scenario") == "positive":
-            # 批量处理先造两设备报警，确保至少有2个可处理ID
+            existing_msg_ids = [
+                item.get("id")
+                for item in self._query_alarm_items(
+                    base_url,
+                    headers,
+                    msg_test_terminal,
+                )
+                if isinstance(item, dict) and item.get("id") not in (None, "")
+            ]
+            existing_bd_ids = [
+                item.get("id")
+                for item in self._query_alarm_items(
+                    base_url,
+                    headers,
+                    bd_test_terminal,
+                )
+                if isinstance(item, dict) and item.get("id") not in (None, "")
+            ]
             self._seed_alarm_for_two_terminals(
                 bd_client=bd_client,
                 msg_addr=msg_test_terminal,
                 bd_addr=bd_test_terminal,
                 case_name=f"{case['name']}-seed-batch",
             )
-            # 优先取两台设备“最新报警ID”，尽量避免混入历史脏数据
-            ids = []
-            latest_msg_id = self._query_latest_alarm_id(base_url, headers, msg_test_terminal)
-            latest_bd_id = self._query_latest_alarm_id(base_url, headers, bd_test_terminal)
-            if latest_msg_id is not None:
-                ids.append(latest_msg_id)
-            if latest_bd_id is not None and latest_bd_id not in ids:
-                ids.append(latest_bd_id)
-            if len(ids) < 2:
-                # 兜底：改走“查询列表+状态过滤+重试补造”提取
+            new_msg_ids = self._wait_for_new_alarm_ids(
+                base_url,
+                headers,
+                msg_test_terminal,
+                existing_msg_ids,
+            )
+            new_bd_ids = self._wait_for_new_alarm_ids(
+                base_url,
+                headers,
+                bd_test_terminal,
+                existing_bd_ids,
+            )
+            ids = [new_msg_ids[0], new_bd_ids[0]]
+            if len({str(alarm_id) for alarm_id in ids}) < 2:
                 ids = self._extract_batch_alarm_ids_with_retry(
                     base_url=base_url,
                     headers=headers,
@@ -529,6 +966,13 @@ class TestAl06AlarmBatchHandleIds(_AlarmHelpers):
             ids = resolve_extract_value("{{alarm_batch_ids}}", required=True)
             if not isinstance(ids, list):
                 pytest.fail(f"alarm_batch_ids 解析结果不是列表: {ids}")
+            for target_alarm_id in ids[:2]:
+                self._wait_for_unhandled_alarm(
+                    base_url,
+                    headers,
+                    [msg_test_terminal, bd_test_terminal],
+                    target_alarm_id,
+                )
             # Apifox 契约：字段必须是 idStr（逗号拼接），不是 ids
             payload = {
                 "idStr": ",".join([str(x) for x in ids[:2]]),
@@ -552,7 +996,20 @@ class TestAl06AlarmBatchHandleIds(_AlarmHelpers):
             log_level="none",
         )
         print_response(res)
-        self._assert_and_report(case, res)
+        self._assert_and_report(
+            case,
+            res,
+            biz_context={"请求体": payload},
+        )
+        if case.get("scenario") == "positive":
+            for target_alarm_id in ids[:2]:
+                self._wait_for_handled_alarm(
+                    base_url,
+                    headers,
+                    [msg_test_terminal, bd_test_terminal],
+                    target_alarm_id,
+                    handle_result,
+                )
 
 
 class TestAl07AlarmBatchInfo(_AlarmHelpers):
@@ -576,4 +1033,5 @@ class TestAl07AlarmBatchInfo(_AlarmHelpers):
             log_level="none",
         )
         print_response(res)
-        self._assert_and_report(case, res)
+        json_data = self._assert_and_report(case, res)
+        self._assert_batch_info_structure(case, json_data)

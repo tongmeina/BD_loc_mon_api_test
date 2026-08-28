@@ -156,7 +156,7 @@ expected:
   error_msg: "围栏名称不能为空"
 ```
 
-`assert_api_result` 的 `expected_msg` 通过 `read_expected_msg(case["expected"])` 读取：优先 `msg`，否则 `error_msg`。正向禁止写 `error_msg: "成功"`。
+`assert_response` 会通过 `read_expected_msg(case["expected"])` 读取期望消息：优先 `msg`，否则 `error_msg`，再交给底层 `assert_api_result` 比较。正向禁止写 `error_msg: "成功"`。
 
 ### 5.2 二进制响应
 
@@ -168,11 +168,11 @@ expected:
   error_msg: "失败"
 ```
 
-testcase 内分支处理 `.json()` vs `.content`。
+普通 JSON 响应统一调用 `assert_response`；二进制响应仅在专用导出断言中读取 `.content`，若服务对失败返回 JSON，再由导出断言按约定处理。
 
 ### 5.3 不要扩展 `assertions[]` 数组
 
-**禁止**采用全局 Cursor 技能里的 `assertions: [{type: ..., expected: ...}]` 结构。断言一律走 `assert_api_result` + 必要的 jsonpath 手写。
+**禁止**采用全局 Cursor 技能里的 `assertions: [{type: ..., expected: ...}]` 结构。普通 JSON 响应一律走 `assert_response`；领域字段才允许对已经解析的 `json_data` 做必要的 JSONPath/局部断言。底层 `assert_api_result` 仅由公共入口调用。
 
 ---
 

@@ -66,7 +66,7 @@ flowchart LR
 **操作**：
 
 1. 在 SKILL 顶部增加 **jkpt 标准栈** 声明：
-   - 手写用例：`common.requests_util` + `assert_api_result`
+   - 手写普通 REST 用例：`common.requests_util` + `assert_response`；底层 `assert_api_result` 仅由公共层调用
    - 禁止：`api_test_framework.run_case`、`pytest_plugins = ["api_test_framework.pytest_plugin"]`
 2. `methods-reference.md` 第 7 节 `pytest_plugin` 标题改为「未实现（勿生成）」或整节移至附录并加删除线说明
 3. 模式 C 章节标题加前缀：`[可选/未使用]`
@@ -174,7 +174,7 @@ flowchart TD
 
 **边界说明**（写入 methods-reference + SKILL 协议节）：
 
-- HTTP 断言用 `assert_api_result`；协议发送用 `bd_client.send_*`，返回值看 `ProtocolSendResult`
+- 普通 HTTP 信封断言用 `assert_response`；协议发送用 `bd_client.send_*`，返回值看 `ProtocolSendResult`
 - `bd_client` 实例由 `conftest.py` 的 `bd_client` fixture 注入（见 `conftest-jkpt.md`）
 - 坐标缺省：中心点 (113.466203, 23.170439) 半径 100m 随机（模块自动处理）
 
@@ -224,7 +224,7 @@ globs: testcases/**, yaml/**, common/**, conftest.py
 
 ## 必须
 - `from common.requests_util import BaseRequest`
-- `from common.allure_assert_util import assert_api_result`
+- `from common.case_report_util import assert_response`
 - 模式 A（无状态）或模式 B（CRUD）；参数化读 `./yaml/test_xxx.yaml`
 
 ## 禁止
@@ -280,7 +280,7 @@ globs: testcases/**, yaml/**, common/**, conftest.py
 
 | 模板 | 动作 |
 |------|------|
-| `test_case_simple.tpl.py` | 确认含 `assert_api_result`、`no_auth` 注释 |
+| `test_case_simple.tpl.py` | 确认含 `assert_response`、`no_auth` 注释 |
 | `test_case_crud.tpl.py` | 同上 |
 | `test_case_yaml.tpl.py` | 文首加「jkpt 未使用，勿复制」 |
 | **新建** `test_case_protocol.tpl.py` | `bd_client` + `bd_test_terminal` + 单次 `send_*` 示例 |
@@ -290,7 +290,7 @@ globs: testcases/**, yaml/**, common/**, conftest.py
 追加项：
 
 - [ ] 协议用例是否注入 `bd_client` / `bd_test_terminal`
-- [ ] HTTP 用例是否使用 `assert_api_result` 且带 `biz_context`
+- [ ] 普通 HTTP 用例是否使用 `assert_response` 且带 `biz_context`
 - [ ] YAML 顶层 key 是否与 `@pytest.mark.parametrize` 一致
 - [ ] 是否误用 `run_case`
 

@@ -7,13 +7,12 @@
 import jsonpath
 import pytest
 
-from common.allure_assert_util import assert_api_result
 from common.buy_cooldown_util import mark_bought, wait_buy_cooldown
+from common.case_report_util import assert_response
 from common.logger_util import key, print_request, print_response, sep
-from common.requests_util import BaseRequest
+from common.requests_util import BaseRequest, parse_response_json
 from common.yaml_util import (
     is_extract_placeholder,
-    read_expected_msg,
     read_yaml,
     resolve_extract_value,
     write_yaml,
@@ -64,24 +63,6 @@ class _EoHelpers:
             return resolve_extract_value(raw, required=required)
         return raw
 
-    def _assert_and_report(self, case, json_data, biz_context):
-        code = _jp_first(json_data, "$.code")
-        msg = _jp_first(json_data, "$.msg") or ""
-        exp_msg = read_expected_msg(case["expected"])
-        sep(" 断言结果 ")
-        key("预期 code", case["expected"]["code"])
-        key("实际 code", code)
-        key("预期 msg", exp_msg)
-        key("实际 msg", msg)
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=exp_msg,
-            actual_code=code,
-            actual_msg=msg,
-            biz_context=biz_context,
-        )
-
     def _post_buy(self, url, *, json, headers, case_name):
         wait_buy_cooldown()
         try:
@@ -89,7 +70,7 @@ class _EoHelpers:
                 "post", url, json=json, headers=headers,
                 case_name=case_name, log_level="none",
             )
-            return res.json()
+            return parse_response_json(res, context=case_name)
         finally:
             mark_bought()
 
@@ -119,8 +100,8 @@ class _EoHelpers:
                 "get", mall_url, params=params, headers=auth_headers,
                 case_name="lifecycle-mall", log_level="none",
             )
-            mall_json = res.json()
-            if _jp_first(mall_json, "$.code") != 0:
+            mall_json = parse_response_json(res, context="lifecycle-mall")
+            if mall_json["code"] != 0:
                 pytest.skip(f"lifecycle GET mall 失败: {mall_json}")
             chosen = self._pick_daily_combo(mall_json)
             if not chosen:
@@ -135,12 +116,12 @@ class _EoHelpers:
         json_data = self._post_buy(
             url, json=body, headers=auth_headers, case_name="lifecycle-combo-buy",
         )
-        code = _jp_first(json_data, "$.code")
+        code = json_data["code"]
         if code == 999:
             json_data = self._post_buy(
                 url, json=body, headers=auth_headers, case_name="lifecycle-combo-buy-retry",
             )
-            code = _jp_first(json_data, "$.code")
+            code = json_data["code"]
         if code == 999:
             pytest.skip(f"套餐 lifecycle buy 过于频繁: {json_data.get('msg')}")
         if code != 0:
@@ -162,13 +143,13 @@ class _EoHelpers:
         json_data = self._post_buy(
             url, json=body, headers=auth_headers, case_name="lifecycle-star-bean-buy",
         )
-        code = _jp_first(json_data, "$.code")
+        code = json_data["code"]
         if code == 999:
             json_data = self._post_buy(
                 url, json=body, headers=auth_headers,
                 case_name="lifecycle-star-bean-buy-retry",
             )
-            code = _jp_first(json_data, "$.code")
+            code = json_data["code"]
         if code == 999:
             pytest.skip(f"星豆 lifecycle buy 过于频繁: {json_data.get('msg')}")
         if code != 0:
@@ -203,8 +184,12 @@ class TestEo01Page(_EoHelpers):
             case_name=case["name"], log_level="none",
         )
         print_response(res)
-        json_data = res.json()
-        if _jp_first(json_data, "$.code") == 0 and not case.get("no_auth"):
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        if json_data["code"] == 0 and not case.get("no_auth"):
             items = _page_items(json_data)
             assert isinstance(json_data.get("data"), dict), f"[{case['name']}] data 不是 dict"
             assert isinstance(items, list), f"[{case['name']}] $.data.items 不是 list"
@@ -213,7 +198,6 @@ class TestEo01Page(_EoHelpers):
                 bad = [it for it in items if it.get("orderStatus") != want_status]
                 assert not bad, f"[{case['name']}] 状态过滤不严: {bad[:3]}"
             self._maybe_extract_page_order(case, json_data, items)
-        self._assert_and_report(case, json_data, {"请求参数": params})
 
     @staticmethod
     def _maybe_extract_page_order(case, json_data, items):
@@ -222,7 +206,7 @@ class TestEo01Page(_EoHelpers):
             return
         if case.get("orderStatus") != "UNPAID":
             return
-        if _jp_first(json_data, "$.code") != 0 or not items:
+        if json_data["code"] != 0 or not items:
             return
         combo = [it for it in items if it.get("productType") == "COMMUNICATION_COMBO"]
         chosen = combo[0] if combo else items[0]
@@ -254,8 +238,12 @@ class TestEo02Detail(_EoHelpers):
             case_name=case["name"], log_level="none",
         )
         print_response(res)
-        json_data = res.json()
-        if _jp_first(json_data, "$.code") == 0 and not case.get("no_auth"):
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        if json_data["code"] == 0 and not case.get("no_auth"):
             data = json_data.get("data") or {}
             assert data.get("orderNo") == params.get("orderNo"), (
                 f"[{case['name']}] orderNo 不一致: {data.get('orderNo')}"
@@ -274,7 +262,6 @@ class TestEo02Detail(_EoHelpers):
             combos = data.get("emergencyUserCombo")
             if combos:
                 assert combos[0].get("addr"), f"[{case['name']}] emergencyUserCombo[0].addr 空"
-        self._assert_and_report(case, json_data, {"请求参数": params})
 
 
 class TestEo03Cancel(_EoHelpers):
@@ -303,9 +290,12 @@ class TestEo03Cancel(_EoHelpers):
             case_name=case["name"], log_level="none",
         )
         print_response(res)
-        json_data = res.json()
-        self._assert_and_report(case, json_data, {"请求参数": params})
-        if _jp_first(json_data, "$.code") == 0 and params.get("orderNo"):
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        if json_data["code"] == 0 and params.get("orderNo"):
             self._assert_cancelled(base_url, auth_headers, params["orderNo"], case["name"])
 
     def _assert_cancelled(self, base_url, auth_headers, order_no, case_name):
@@ -315,8 +305,11 @@ class TestEo03Cancel(_EoHelpers):
             "get", url, params=params, headers=auth_headers,
             case_name=f"{case_name}-查取消后", log_level="none",
         )
-        json_data = res.json()
-        assert _jp_first(json_data, "$.code") == 0, f"[{case_name}] cancel 后 detail 失败: {json_data}"
+        json_data = assert_response(
+            {"name": f"{case_name}-查取消后", "expected": {"code": 0}},
+            res,
+            biz_context={"请求参数": params},
+        )
         status = _jp_first(json_data, "$.data.orderStatus")
         assert status == "CANCELLED", f"[{case_name}] cancel 后 status={status}"
         key("cancel后状态", status)
@@ -342,9 +335,12 @@ class TestEo04Delete(_EoHelpers):
             case_name=case["name"], log_level="none",
         )
         print_response(res)
-        json_data = res.json()
-        self._assert_and_report(case, json_data, {"请求参数": params})
-        if _jp_first(json_data, "$.code") == 0 and params.get("orderNo"):
+        json_data = assert_response(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        if json_data["code"] == 0 and params.get("orderNo"):
             self._assert_gone(base_url, auth_headers, params["orderNo"], case["name"])
 
     def _assert_gone(self, base_url, auth_headers, order_no, case_name):
@@ -354,7 +350,9 @@ class TestEo04Delete(_EoHelpers):
             "get", url, params=params, headers=auth_headers,
             case_name=f"{case_name}-查删除后", log_level="none",
         )
-        json_data = res.json()
-        code = _jp_first(json_data, "$.code")
-        assert code == 999, f"[{case_name}] delete 后 detail 预期 999，实际 {json_data}"
-        key("delete后detail", f"code={code} msg={json_data.get('msg')}")
+        json_data = assert_response(
+            {"name": f"{case_name}-查删除后", "expected": {"code": 999}},
+            res,
+            biz_context={"请求参数": params},
+        )
+        key("delete后detail", f"code={json_data['code']} msg={json_data.get('msg')}")

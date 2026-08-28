@@ -10,9 +10,9 @@
 import jsonpath
 import pytest
 from common.requests_util import BaseRequest
-from common.yaml_util import read_yaml, write_yaml, resolve_extract_value, is_extract_placeholder, read_expected_msg
+from common.yaml_util import read_yaml, write_yaml, resolve_extract_value, is_extract_placeholder
 from common.logger_util import sep, key, print_request, print_response
-from common.allure_assert_util import assert_api_result
+from common.case_report_util import assert_response
 
 _jsonpath_parse = jsonpath.jsonpath
 http = BaseRequest()
@@ -26,24 +26,11 @@ _TEST_DATA = read_yaml("./yaml/test_alarm_settings_controller.yaml")
 class _AlarmSettingsHelpers:
     """不被 pytest 收集；供接口类复用断言。"""
 
-    def _assert_and_report(self, case, res):
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
-        raw_msg = _jsonpath_parse(json_data, "$.msg")
-        msg = raw_msg[0] if raw_msg else "未知错误"
-
-        sep(" 断言结果 ")
-        key("预期 code", case["expected"]["code"])
-        key("实际 code", code)
-        key("预期 msg", read_expected_msg(case["expected"]))
-        key("实际 msg", msg)
-
-        assert_api_result(
-            case_name=case["name"],
-            expected_code=case["expected"]["code"],
-            expected_msg=read_expected_msg(case["expected"]),
-            actual_code=code,
-            actual_msg=msg,
+    def _assert_and_report(self, case, response, biz_context=None):
+        return assert_response(
+            case,
+            response,
+            biz_context=biz_context or {"请求用例": case["name"]},
         )
 
 
@@ -66,9 +53,12 @@ class TestAs01AlarmSettingsList(_AlarmSettingsHelpers):
             log_level="none",
         )
         print_response(res)
-
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
+        json_data = self._assert_and_report(
+            case,
+            res,
+            biz_context={"请求地址": url, "请求头已脱敏": True},
+        )
+        code = json_data["code"]
 
         # 正向：提取 id + 四开关快照写入 extract.yaml（供 TestAs02 消费）
         if code == 0 and case.get("name") == "报警通知设置-列表-正向":
@@ -87,7 +77,6 @@ class TestAs01AlarmSettingsList(_AlarmSettingsHelpers):
                 key("alarm_setting_id", sid)
                 key("四开关快照", snapshot)
 
-        self._assert_and_report(case, res)
 
 
 class TestAs02AlarmSettingsEdit(_AlarmSettingsHelpers):
@@ -143,9 +132,12 @@ class TestAs02AlarmSettingsEdit(_AlarmSettingsHelpers):
             log_level="none",
         )
         print_response(res)
-
-        json_data = res.json()
-        code = _jsonpath_parse(json_data, "$.code")[0]
+        json_data = self._assert_and_report(
+            case,
+            res,
+            biz_context={"请求参数": params},
+        )
+        code = json_data["code"]
 
         # ---------- 正向：还原 ----------
         if (
@@ -164,14 +156,12 @@ class TestAs02AlarmSettingsEdit(_AlarmSettingsHelpers):
                 case_name="报警通知设置-编辑-正向-还原",
                 log_level="none",
             )
-            restore_json = restore_res.json()
-            restore_code = _jsonpath_parse(restore_json, "$.code")[0]
-            if restore_code != 0:
-                restore_msg = _jsonpath_parse(restore_json, "$.msg")
-                pytest.fail(
-                    f"还原失败，请立即检查 alarm_setting_id={tid} 的四开关状态！"
-                    f"restore_code={restore_code}, restore_msg={restore_msg[0] if restore_msg else '未知'}"
-                )
+            assert_response(
+                {
+                    "name": "报警通知设置-编辑-正向-还原",
+                    "expected": {"code": 0},
+                },
+                restore_res,
+                biz_context={"alarm_setting_id": tid, "还原参数": restore_params},
+            )
             key("还原结果", "成功")
-
-        self._assert_and_report(case, res)

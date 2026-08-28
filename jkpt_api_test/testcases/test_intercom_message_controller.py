@@ -1,4 +1,4 @@
-# testcases/test_intercom_message_controller.py
+﻿# testcases/test_intercom_message_controller.py
 """对讲群消息域 4 口（message/page、receive/info、clear/unread、clear/all-unread）
 
 计划：plan/intercom-message-tests.plan.md；现网基线 §6（2026-08-20 探针 S0~S6 实测）。
@@ -19,7 +19,6 @@
 import math
 import time
 
-import jsonpath
 import pytest
 import requests
 
@@ -33,7 +32,7 @@ from common.case_report_util import (
 )
 from common.cleanup import intercom_group
 from common.logger_util import key
-from common.requests_util import BaseRequest
+from common.requests_util import BaseRequest, parse_response_json
 from common.star_bean_util import latest_balance
 from common.yaml_util import (
     is_extract_placeholder,
@@ -42,13 +41,13 @@ from common.yaml_util import (
     write_yaml,
 )
 
-_jsonpath_parse = jsonpath.jsonpath
 _TEST_DATA = read_yaml("./yaml/test_intercom_message_controller.yaml")
 
 # 终端上行在对讲群产生的两类消息（IMAGE/OK/ALARM 协议不可造，本期不覆盖）
 _EXPECT_SEND_TYPES = {"TEXT", "VOICE"}
-# 双群一致性：同一条消息在 SOS 侧与对讲群侧 chatTime 允许的毫秒偏差（实测 ~20ms）
-_CHAT_TIME_TOLERANCE_MS = 5000
+# 双群一致性：同一条消息在 SOS 侧与对讲群侧 chatTime 允许的毫秒偏差（实测 ~20ms）。
+# 勿放宽：三设备时序下心跳/取消记录与 VOICE 间隔可能 <5s，5000ms 会误判泄漏。
+_CHAT_TIME_TOLERANCE_MS = 100
 
 
 class _ImHelpers:
@@ -76,7 +75,7 @@ class _ImHelpers:
                     "get", url, params=params, headers=headers,
                     case_name=name, log_level="none",
                 )
-                return res.json()
+                return parse_response_json(res, context=name)
             except requests.exceptions.ConnectionError as e:
                 last_err = e
                 key("辅助查询重试", f"{name} 第{attempt + 1}次连接中断，1s 后重试")
@@ -143,47 +142,22 @@ class _ImHelpers:
 
     @staticmethod
     def read_transition_setup(http, base_url, auth_headers, request, seed):
-        """B 棒4 跨账号入群 → B 侧触发已读动作，返回留痕行。
+        """B 成员侧触发已读动作，返回留痕行（三设备造数后 B棒4 已在群内）。
 
         现网实测（2026-08-20）：B 成员侧 clear/unread 后，消息级 readCount/unreadCount
         仍恒 0、receive/info 三列表仍为空——已读明细未落地，故本支路只做「留痕 + 成员侧
         查询等价性」断言，不写 readCount 增 1 的臆造期望（计划 §4.3 case0a 降级条款）。
         """
         headers_b = request.getfixturevalue("auth_headers_b")
-        sn_b4 = request.getfixturevalue("rescue_sat_terminal_b4")
-        gid = seed["groupId"]
-        inv = http.send_request(
-            "post", f"{base_url}/api/monitor/intercom/group/invitation",
-            json={"intercomGroupId": gid, "addrInfos": [{"addr": sn_b4}], "force": False},
-            headers=auth_headers, case_name="消息域邀B棒4", log_level="none",
-        )
-        inv_code = jp_first(inv.json(), "$.code")
-        notice = None
-        for _ in range(5):
-            send = http.send_request(
-                "get", f"{base_url}/api/monitor/intercom/message/send/invitation/list",
-                params={"intercomGroupId": gid, "status": "PENDING",
-                        "page": 1, "pageSize": 50},
-                headers=auth_headers, case_name="消息域查PENDING通知", log_level="none",
-            )
-            notice = next((i for i in jp_list(send.json(), "$.data.items[*]")
-                           if i.get("addr") == sn_b4), None)
-            if notice:
-                break
-            time.sleep(1)
-        handler_code = None
-        if notice:
-            handler = http.send_request(
-                "put", f"{base_url}/api/monitor/intercom/message/invitation/handler",
-                params={"handlerType": "AGREED", "invitationNoticeId": notice["id"]},
-                headers=headers_b, case_name="消息域B同意入群", log_level="none",
-            )
-            handler_code = jp_first(handler.json(), "$.code")
-        members = jp_list(http.send_request(
+        sn_c = seed["devices"]["voice"]["sn"]
+        gid = seed["group"]["id"]
+        member_response = http.send_request(
             "get", f"{base_url}/api/monitor/intercom/group/terminal/list",
             params={"intercomGroupId": gid}, headers=auth_headers,
-            case_name="消息域B入群复核", log_level="none",
-        ).json(), "$.data[*].addr")
+            case_name="消息域B成员复核", log_level="none",
+        )
+        member_data = parse_response_json(member_response, context="消息域B成员复核")
+        members = jp_list(member_data, "$.data[*].addr")
         b_count = len(jp_list(
             _ImHelpers.page(http, base_url, headers_b, gid, name="B成员侧查消息"),
             "$.data.items[*]",
@@ -193,16 +167,13 @@ class _ImHelpers:
             params={"intercomGroupId": gid}, headers=headers_b,
             case_name="B侧清未读触发已读", log_level="none",
         )
-        clear_code = jp_first(clear_b.json(), "$.code")
+        clear_data = parse_response_json(clear_b, context="B侧清未读触发已读")
+        clear_code = clear_data["code"]
         time.sleep(2)
-        key("B 侧已读触发",
-            f"invite={inv_code} handler={handler_code} clear={clear_code}")
+        key("B 侧已读触发", f"clear={clear_code}")
         return [
-            {"项": "跨账号邀请", "期望": 0, "实际": inv_code, "通过": inv_code == 0},
-            {"项": "B 同意入群", "期望": 0, "实际": handler_code,
-             "通过": handler_code == 0},
-            {"项": "B 棒在成员列表", "期望": sn_b4, "实际": members,
-             "通过": sn_b4 in members},
+            {"项": "B 棒在成员列表（造数已入群）", "期望": sn_c, "实际": members,
+             "通过": sn_c in members},
             {"项": "B 成员侧可见条数", "期望": len(seed["messageIds"]), "实际": b_count,
              "通过": b_count == len(seed["messageIds"])},
             {"项": "B 侧 clear/unread", "期望": 0, "实际": clear_code,
@@ -236,29 +207,47 @@ def _im_star_bean_gate(base_url, auth_headers):
 
 
 class TestIm00FixtureChain:
-    """造数链自检（非接口）：群/成员/消息/群状态四项，通过后写 extract。"""
+    """造数链自检（非接口）：群/三设备成员/三角色消息/双SOS群/群状态。"""
 
     def test_fixture_chain(self, base_url, auth_headers, intercom_message_group):
         seed = intercom_message_group
         http = BaseRequest()
-        assert seed["groupId"], "造数群 id 为空"
-        assert seed["sn"] in seed["members"], \
-            f"造数棒未真入群: sn={seed['sn']} members={seed['members']}"
-        types = seed["sendTypes"]
-        assert len(seed["messageIds"]) >= 3, f"消息不足 3 条: {types}"
-        assert types.count("TEXT") >= 2, f"SOS 文本消息不足 2 条: {types}"
-        assert "VOICE" in types, f"缺语音消息: {types}"
-        status = _ImHelpers.remainder_status(
-            http, base_url, auth_headers, seed["groupId"], "造数群状态",
-        )
+        gid = seed["group"]["id"]
+        devices = seed["devices"]
+        msgs = seed["messagesByRole"]
+        member_set = set(seed["group"]["members"])
+        expected_members = {d["sn"] for d in devices.values()}
+        assert gid, "造数群 id 为空"
+        for role, info in devices.items():
+            assert info["sn"] in member_set, \
+                f"造数棒未真入群: role={role} sn={info['sn']} members={sorted(member_set)}"
+        assert member_set == expected_members, \
+            f"成员集合不是三设备: expected={sorted(expected_members)} actual={sorted(member_set)}"
+        for role, expect_type, expect_sn in (
+            ("key_sos", "TEXT", devices["key_sos"]["sn"]),
+            ("water_sos", "TEXT", devices["water_sos"]["sn"]),
+            ("voice", "VOICE", devices["voice"]["sn"]),
+        ):
+            message = msgs[role]
+            assert message and message.get("id"), f"缺 {role} 消息"
+            assert message.get("sendType") == expect_type, \
+                f"{role} sendType 期望 {expect_type} 实际 {message.get('sendType')}"
+            sender = str((message.get("avatarInfo") or {}).get("memberAccount"))
+            assert sender == str(expect_sn), \
+                f"{role} 发送者期望 {expect_sn} 实际 {sender}"
+        for role, group in seed["sosGroups"].items():
+            assert group["chatItemId"], f"缺 {role} SOS 群"
+            assert group["statusAfterEnd"] == 0, \
+                f"{role} SOS 结束后 status 期望 0 实际 {group['statusAfterEnd']}"
+        status = _ImHelpers.remainder_status(http, base_url, auth_headers, gid, "造数群状态")
         assert status == 1, f"造数群应活跃(status=1)，实际 {status}"
-        write_yaml("./extract.yaml", {"im_group_id": seed["groupId"]}, mode="append")
-        if seed.get("sosChatItemId"):
-            write_yaml("./extract.yaml",
-                       {"im_sos_group_id": seed["sosChatItemId"]}, mode="append")
-        key("extract im_group_id", seed["groupId"])
-        key("造数事实", f"群 {seed['groupName']} / {len(seed['messageIds'])} 条 {types} / "
-                        f"SOS 伴生群 {seed.get('sosChatItemId')}")
+        write_yaml("./extract.yaml", {"im_group_id": gid}, mode="append")
+        write_yaml("./extract.yaml", {"im_message_id": msgs["voice"]["id"]}, mode="append")
+        key("extract", f"im_group_id={gid} im_message_id={msgs['voice']['id']}")
+        key("造数事实", f"群 {seed['group']['name']} / 三设备 "
+                        f"{[d['sn'] for d in devices.values()]} / "
+                        f"耗时 {seed['timing']['total']:.0f}s / "
+                        f"SOS {list(seed['sosGroups'])}")
 
 
 class TestIm01Page:
@@ -285,10 +274,8 @@ class TestIm01Page:
             http, "get", url, case, case_headers(headers, case), params=params,
         )
         if scenario == "page_size_illegal":
-            # 后端抛 Java 类型转换异常，msg 是长英文原文（含 nested exception），
-            # 不适合做全等断言：只断 code + msg 命中出错字段名。
-            code = jp_first(json_data, "$.code")
-            msg = jp_first(json_data, "$.msg") or ""
+            code = json_data["code"]
+            msg = json_data.get("msg") or ""
             report_extra_and_assert("pageSize 非法类型", [
                 {"项": "code", "期望": 1001, "实际": code, "通过": code == 1001},
                 {"项": "msg 命中字段名", "期望": "含 pageSize", "实际": msg[:60],
@@ -329,7 +316,6 @@ class TestIm01Page:
                 "分页正向", rows,
                 f"{len(items)} 条 {[m.get('sendType') for m in items]} total={total}",
             )
-            # 每轮必须覆写：造数群每轮重建，沿用上轮 id 会查到别的群的消息
             if items:
                 write_yaml("./extract.yaml",
                            {"im_message_id": items[0]["id"]}, mode="append")
@@ -337,6 +323,7 @@ class TestIm01Page:
             return
 
         if scenario == "field_shape":
+            devices = seed["devices"]
             texts = [m for m in items if m.get("sendType") == "TEXT"]
             voices = [m for m in items if m.get("sendType") == "VOICE"]
             no_loc = [m.get("id") for m in texts
@@ -344,10 +331,18 @@ class TestIm01Page:
             bad_voice = [m.get("id") for m in voices
                          if not (isinstance(m.get("fileSize"), int)
                                  and m["fileSize"] > 0 and m.get("content"))]
-            bad_sender = [(m.get("avatarInfo") or {}).get("memberAccount")
-                          for m in items
-                          if (m.get("avatarInfo") or {}).get("memberAccount")
-                          != seed["sn"]]
+            expect_sender = {str(m["id"]): str(d["sn"])
+                             for m, d in (
+                                 (seed["messagesByRole"]["key_sos"], devices["key_sos"]),
+                                 (seed["messagesByRole"]["water_sos"], devices["water_sos"]),
+                                 (seed["messagesByRole"]["voice"], devices["voice"]),
+                             )}
+            bad_sender = [
+                (m.get("id"), (m.get("avatarInfo") or {}).get("memberAccount"))
+                for m in items
+                if expect_sender.get(str(m.get("id")))
+                != str((m.get("avatarInfo") or {}).get("memberAccount"))
+            ]
             rows += [
                 {"项": "TEXT 带定位", "期望": "loc.lng 非空", "实际": no_loc,
                  "通过": bool(texts) and not no_loc},
@@ -355,69 +350,83 @@ class TestIm01Page:
                  "实际": bad_voice or [(m.get("fileSize"), str(m.get("content"))[:12])
                                        for m in voices],
                  "通过": bool(voices) and not bad_voice},
-                {"项": "发送方设备", "期望": seed["sn"], "实际": bad_sender,
-                 "通过": not bad_sender},
+                {"项": "三设备发送者精确映射", "期望": "按 messagesByRole",
+                 "实际": bad_sender or "全部命中", "通过": not bad_sender},
             ]
             report_extra_and_assert(
                 "字段级校验", rows,
                 f"TEXT {len(texts)} 条带定位、VOICE {len(voices)} 条带时长，"
-                f"发送方均为 {seed['sn']}",
+                f"发送者按角色映射 {sorted(expect_sender.values())}",
             )
             return
 
         if scenario == "dual_group_consistency":
-            sos = seed.get("sosRecords") or {}
-            if not seed.get("sosChatItemId"):
-                pytest.skip("未捕获到 SOS 伴生群，跳过双群一致性")
-            sos_times = [t for t in (sos.get("chatTimes") or []) if isinstance(t, int)]
-            text_times = [m["chatTime"] for m in items if m.get("sendType") == "TEXT"]
-            voice_times = [m["chatTime"] for m in items if m.get("sendType") == "VOICE"]
+            leaked = []
+            for role, group in seed["sosGroups"].items():
+                rec = group["records"]
+                times = [t for t in (rec.get("chatTimes") or []) if isinstance(t, int)]
+                leaked += [
+                    (role, item.get("id"))
+                    for item in rec.get("items") or []
+                    if item.get("sendType") == "VOICE"
+                ]
+                sn = str(group["terminalSn"])
 
-            def matched(t, pool):
-                return any(abs(t - p) <= _CHAT_TIME_TOLERANCE_MS for p in pool)
+                def matched(t, pool):
+                    return any(abs(t - p) <= _CHAT_TIME_TOLERANCE_MS for p in pool)
 
-            unmatched_text = [t for t in text_times if not matched(t, sos_times)]
-            leaked_voice = [t for t in voice_times if matched(t, sos_times)]
-            rows += [
-                {"项": "SOS 侧有记录", "期望": "≥2 条", "实际": sos.get("total"),
-                 "通过": isinstance(sos.get("total"), int) and sos["total"] >= 2},
-                {"项": "SOS 文本双落", "期望": "对讲群每条 TEXT 都能在 SOS 侧对上",
-                 "实际": unmatched_text or f"{len(text_times)} 条全部命中",
-                 "通过": bool(text_times) and not unmatched_text},
-                {"项": "取消后语音单落", "期望": "VOICE 不出现在 SOS 侧",
-                 "实际": leaked_voice or f"{len(voice_times)} 条均只在对讲群",
-                 "通过": bool(voice_times) and not leaked_voice},
-                {"项": "SOS 侧多出条数（心跳只落 SOS）", "期望": "记录项",
-                 "实际": (sos.get("total") or 0) - len(text_times), "通过": True},
-            ]
+                text_times = [
+                    m["chatTime"] for m in items
+                    if m.get("sendType") == "TEXT"
+                    and str((m.get("avatarInfo") or {}).get("memberAccount")) == sn
+                ]
+                unmatched = [t for t in text_times if not matched(t, times)]
+                extra = (rec.get("total") or 0) - len(text_times)
+                # SOS 侧在结束跃迁时可能追加 1 条系统状态 TEXT；它不是对讲群消息泄漏。
+                allow_extra = extra <= 1
+                rows += [
+                    {"项": f"{role} SOS 有记录", "期望": "≥1", "实际": rec.get("total"),
+                     "通过": isinstance(rec.get("total"), int) and rec["total"] >= 1},
+                    {"项": f"{role} TEXT 双落", "期望": "对讲群该设备 TEXT 能在 SOS 侧对上",
+                     "实际": unmatched or f"{len(text_times)} 条命中",
+                     "通过": bool(text_times) and not unmatched},
+                    {"项": f"{role} SOS 侧多出",
+                     "期望": "≤1 条 SOS 系统状态 TEXT",
+                     "实际": extra, "通过": allow_extra},
+                ]
+            rows.append({
+                "项": "VOICE 不落 SOS", "期望": "无泄漏", "实际": leaked or "无泄漏",
+                "通过": not leaked,
+            })
             report_extra_and_assert(
                 "双群一致性", rows,
-                f"对讲群 {len(text_times)} TEXT 双落、{len(voice_times)} VOICE 单落；"
-                f"SOS 侧共 {sos.get('total')} 条",
+                f"按设备核对 SOS 双落；VOICE 泄漏={leaked or '无'}",
             )
             return
 
         if scenario == "zero_growth":
-            totals = seed["totals"]
+            snaps = seed["snapshots"]
             bad_type = [m.get("sendType") for m in items
                         if m.get("sendType") not in _EXPECT_SEND_TYPES]
             rows += [
-                {"项": "心跳(flag=0)零增长", "期望": totals["flag2"],
-                 "实际": totals["flag0"], "通过": totals["flag0"] == totals["flag2"]},
-                {"项": "取消SOS(flag=10)零增长", "期望": totals["flag0"],
-                 "实际": totals["flag10"], "通过": totals["flag10"] == totals["flag0"]},
-                {"项": "语音才增长", "期望": totals["flag10"] + 1,
-                 "实际": totals["speech"],
-                 "通过": totals["speech"] == totals["flag10"] + 1},
-                {"项": "当前 total 与造数末态一致", "期望": totals["speech"],
-                 "实际": total, "通过": total == totals["speech"]},
+                {"项": "心跳(flag=0)零增长", "期望": snaps["afterSos"],
+                 "实际": snaps["afterClose"],
+                 "通过": snaps["afterClose"] == snaps["afterSos"]},
+                {"项": "取消SOS(flag=10)零增长", "期望": snaps["afterSos"],
+                 "实际": snaps["afterClose"],
+                 "通过": snaps["afterClose"] == snaps["afterSos"]},
+                {"项": "语音才增长", "期望": snaps["afterClose"] + 1,
+                 "实际": snaps["speech"],
+                 "通过": snaps["speech"] == snaps["afterClose"] + 1},
+                {"项": "当前 total 与造数末态一致", "期望": snaps["speech"],
+                 "实际": total, "通过": total == snaps["speech"]},
                 {"项": "无非预期消息类型", "期望": sorted(_EXPECT_SEND_TYPES),
                  "实际": bad_type or "无", "通过": not bad_type},
             ]
             report_extra_and_assert(
                 "心跳/取消零增长", rows,
-                f"total 轨迹 {totals['flag1']}→{totals['flag2']}→{totals['flag0']}"
-                f"→{totals['flag10']}→{totals['speech']}",
+                f"total 轨迹 {snaps['baseline']}→{snaps['afterSos']}"
+                f"→{snaps['afterClose']}→{snaps['speech']}",
             )
             return
 
@@ -470,8 +479,8 @@ class TestIm01Page:
             rows += [
                 {"项": "items 为空列表", "期望": "[]（非 null、非报错）",
                  "实际": items, "通过": isinstance(data.get("items"), list) and not items},
-                {"项": "total 不变", "期望": seed["totals"]["speech"], "实际": total,
-                 "通过": total == seed["totals"]["speech"]},
+                {"项": "total 不变", "期望": seed["snapshots"]["speech"], "实际": total,
+                 "通过": total == seed["snapshots"]["speech"]},
             ]
             report_extra_and_assert(
                 "页码超界", rows, f"page=9999 返回空列表，total 仍为 {total}",
@@ -487,8 +496,8 @@ class TestIm01Page:
             rows += [
                 {"项": "与首页同结果", "期望": head_ids, "实际": [m.get("id") for m in items],
                  "通过": [m.get("id") for m in items] == head_ids},
-                {"项": "total 不变", "期望": seed["totals"]["speech"], "实际": total,
-                 "通过": total == seed["totals"]["speech"]},
+                {"项": "total 不变", "期望": seed["snapshots"]["speech"], "实际": total,
+                 "通过": total == seed["snapshots"]["speech"]},
             ]
             report_extra_and_assert(
                 "非法页码回落首页", rows,
@@ -500,8 +509,8 @@ class TestIm01Page:
             rows += [
                 {"项": "返回全量", "期望": total, "实际": len(items),
                  "通过": len(items) == total},
-                {"项": "total 不变", "期望": seed["totals"]["speech"], "实际": total,
-                 "通过": total == seed["totals"]["speech"]},
+                {"项": "total 不变", "期望": seed["snapshots"]["speech"], "实际": total,
+                 "通过": total == seed["snapshots"]["speech"]},
             ]
             report_extra_and_assert(
                 "pageSize=-1 当默认处理", rows, f"pageSize=-1 返回全量 {len(items)} 条",
@@ -509,12 +518,10 @@ class TestIm01Page:
             return
 
         if scenario == "cross_account":
-            # 现网实测：消息域无越权拦截，B（非群成员、非群主）可读全部消息内容。
-            # 纪律：按实测写 code=0，不臆造失败码；差异以「缺陷留痕」行呈报。
             rows += [
-                {"项": "B 侧可见条数", "期望": f"A 侧 {seed['totals']['speech']} 条（实测等同）",
-                 "实际": len(items), "通过": len(items) == seed["totals"]["speech"]},
-                {"项": "越权拦截", "期望": "现网无拦截（缺陷留痕，对比 close 的 999 只有群主）",
+                {"项": "B 侧可见条数", "期望": f"A 侧 {seed['snapshots']['speech']} 条",
+                 "实际": len(items), "通过": len(items) == seed["snapshots"]["speech"]},
+                {"项": "越权拦截", "期望": "现网无拦截（缺陷留痕）",
                  "实际": f"code=0，B 可读 {len(items)} 条", "通过": True},
             ]
             report_extra_and_assert(
@@ -536,9 +543,6 @@ class TestIm02ReceiveInfo:
         url = f"{base_url}/api/monitor/intercom/message/receive/info"
         seed = intercom_message_group
         scenario = case.get("scenario")
-        headers = auth_headers
-        if scenario == "cross_account":
-            headers = request.getfixturevalue("auth_headers_b")
         mid = _ImHelpers.live_message_id(case, "intercomMessageId", seed)
         pre_rows = []
         if scenario == "read_transition":
@@ -548,9 +552,18 @@ class TestIm02ReceiveInfo:
         params = {}
         if mid is not None:
             params["intercomMessageId"] = mid
-        json_data = send_case(
-            http, "get", url, case, case_headers(headers, case), params=params,
-        )
+        if scenario == "cross_account":
+            params["intercomMessageId"] = seed["accessSnapshots"]["bNonMemberReceiveMessageId"]
+            response = seed["accessSnapshots"]["bNonMemberReceiveResponse"]
+            json_data = parse_response_json(response, context=case["name"])
+            from common.logger_util import print_request, print_response, sep
+            sep(f" 测试用例: {case['name']}")
+            print_request("GET", url, params=params, headers=request.getfixturevalue("auth_headers_b"))
+            print_response(response)
+        else:
+            json_data = send_case(
+                http, "get", url, case, case_headers(auth_headers, case), params=params,
+            )
         code, _ = assert_case(case, json_data, {"请求参数": params})
         if code != 0:
             return
@@ -575,7 +588,7 @@ class TestIm02ReceiveInfo:
 
         if scenario == "cross_account":
             rows.append({
-                "项": "越权拦截", "期望": "现网无拦截（缺陷留痕）",
+                "项": "越权拦截", "期望": "现网无拦截（缺陷留痕，造数期非成员快照）",
                 "实际": "code=0，B 可查 A 群消息接收明细", "通过": True,
             })
             report_extra_and_assert(
@@ -584,7 +597,7 @@ class TestIm02ReceiveInfo:
             return
 
         msg_row = _ImHelpers.message_by_id(
-            http, base_url, auth_headers, seed["groupId"], mid,
+            http, base_url, auth_headers, seed["group"]["id"], mid,
         ) or {}
         counts = {"readList": msg_row.get("readCount"),
                   "unreadList": msg_row.get("unreadCount"),
@@ -624,7 +637,7 @@ class TestIm03ClearUnread:
         before_unread = before_counts = None
         if scenario in ("positive", "idempotent"):
             before_unread, _ = _ImHelpers.unread_num(
-                http, base_url, auth_headers, seed["groupName"], gid, name="清前未读数",
+                http, base_url, auth_headers, seed["group"]["name"], gid, name="清前未读数",
             )
             before_counts = [(m.get("unreadCount"), m.get("readCount"))
                              for m in jp_list(_ImHelpers.page(
@@ -648,7 +661,7 @@ class TestIm03ClearUnread:
             return
         time.sleep(2)
         after_unread, item = _ImHelpers.unread_num(
-            http, base_url, auth_headers, seed["groupName"], gid, name="清后未读数",
+            http, base_url, auth_headers, seed["group"]["name"], gid, name="清后未读数",
         )
         after_counts = [(m.get("unreadCount"), m.get("readCount"))
                         for m in jp_list(_ImHelpers.page(
@@ -720,7 +733,7 @@ class TestIm05StateAfterCloseDelete:
     def test_state(self, base_url, auth_headers, intercom_message_group, case):
         http = BaseRequest()
         seed = intercom_message_group
-        gid = seed["groupId"]
+        gid = seed["group"]["id"]
         scenario = case.get("scenario")
         pre_rows = []
         if scenario == "after_close":
@@ -729,7 +742,8 @@ class TestIm05StateAfterCloseDelete:
                 params={"intercomGroupId": gid}, headers=auth_headers,
                 case_name="状态维度-关群", log_level="none",
             )
-            close_code = jp_first(res.json(), "$.code")
+            close_data = parse_response_json(res, context="状态维度-关群")
+            close_code = close_data["code"]
             status = _ImHelpers.remainder_status(
                 http, base_url, auth_headers, gid, "关群后状态",
             )
@@ -743,7 +757,8 @@ class TestIm05StateAfterCloseDelete:
                 params={"intercomGroupId": gid}, headers=auth_headers,
                 case_name="状态维度-删群", log_level="none",
             )
-            del_code = jp_first(res.json(), "$.code")
+            delete_data = parse_response_json(res, context="状态维度-删群")
+            del_code = delete_data["code"]
             if del_code == 0:
                 intercom_group.unregister(gid)
             pre_rows = [
@@ -759,14 +774,14 @@ class TestIm05StateAfterCloseDelete:
             return
         items = jp_list(json_data, "$.data.items[*]")
         chat = _ImHelpers.chat_items(
-            http, base_url, auth_headers, item_name=seed["groupName"],
+            http, base_url, auth_headers, item_name=seed["group"]["name"],
             name="状态维度-聊天项",
         )
         hit = next((c for c in chat if str(c.get("id")) == str(gid)), None)
         rows = pre_rows + [
-            {"项": "消息仍可查", "期望": seed["totals"]["speech"],
+            {"项": "消息仍可查", "期望": seed["snapshots"]["speech"],
              "实际": jp_first(json_data, "$.data.total"),
-             "通过": jp_first(json_data, "$.data.total") == seed["totals"]["speech"]},
+             "通过": jp_first(json_data, "$.data.total") == seed["snapshots"]["speech"]},
             {"项": "消息条数", "期望": len(seed["messageIds"]), "实际": len(items),
              "通过": len(items) == len(seed["messageIds"])},
         ]

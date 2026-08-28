@@ -296,12 +296,19 @@ class BDProtocolClient:
 
         for idx, chunk in enumerate(chunks, start=1):
             content = f"{_AA_HEADER_PREFIX}{ts}{chunk}"
+            print(f"  📦 {case_name} 分包 {idx}/{len(chunks)} 开始发送", flush=True)
             r = self.transport.send_bd_content(
                 content_hex=content,
                 from_addr=from_addr,
                 case_name=f"{case_name}-分包{idx}",
+                timeout=15,
             )
             results.append(r)
+            print(
+                f"  📦 {case_name} 分包 {idx}/{len(chunks)} 完成: "
+                f"status={r.status_code}, code={r.code}",
+                flush=True,
+            )
             if interval_seconds > 0 and idx < len(chunks):
                 time.sleep(interval_seconds)
         return results

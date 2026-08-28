@@ -6,13 +6,16 @@
 """
 import jsonpath
 
+from common.requests_util import parse_response_json
+
 _jsonpath_parse = jsonpath.jsonpath
 
 _TX_PATH = "/api/monitor/star-bean/transaction/page"
 
 
 def _items(res):
-    found = _jsonpath_parse(res.json(), "$.data.items[*]")
+    data = parse_response_json(res, context="星豆流水查询")
+    found = _jsonpath_parse(data, "$.data.items[*]")
     return found if found else []
 
 

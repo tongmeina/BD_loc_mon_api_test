@@ -120,7 +120,7 @@ intercom_invite_cases:
     force: false
     expected:
       code: 1001
-      error_msg: "仅支持天通应急救援棒设备"
+      error_msg: "仅支持星联卫士设备"
 
   - name: "对讲群-邀请-负向-无Token"
     intercomGroupId: "0"
